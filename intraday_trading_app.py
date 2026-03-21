@@ -566,7 +566,8 @@ def run_breakout_screener(selected_stocks, interval, kite, port):
 #  PORTFOLIO PERSISTENCE (Intraday — daily reset)
 # ─────────────────────────────────────────────
 
-PORTFOLIO_FILE = pathlib.Path.home() / "Downloads" / "investo_intraday_portfolio.json"
+PORTFOLIO_FILE   = pathlib.Path.home() / "Downloads" / "investo_intraday_portfolio.json"
+SCAN_HISTORY_FILE = pathlib.Path.home() / "Downloads" / "investo_scan_history.csv"
 PORTFOLIO_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 IST = pytz.timezone("Asia/Kolkata")
@@ -599,6 +600,52 @@ def save_portfolio(port: list) -> None:
         )
     except Exception as e:
         st.warning(f"⚠️ Could not save portfolio: {e}")
+
+
+def save_scan_history(results: list, interval: str, nifty_state: str, vix) -> None:
+    """
+    Auto-save every scan result to CSV for ML training data.
+    Appends rows — never overwrites. File: ~/Downloads/investo_scan_history.csv
+    Columns: timestamp, symbol, interval, score, verdict, price, change_pct,
+             rsi, vwap, vol_ratio, cpr_width, rs_vs_nifty, sector,
+             nifty_state, vix, gap_pct, warmup
+    """
+    try:
+        import csv as _csv
+        _cols = [
+            'timestamp','symbol','interval','score','verdict','price',
+            'change_pct','rsi','vwap','vol_ratio','cpr_width',
+            'rs_vs_nifty','sector','nifty_state','vix','gap_pct','warmup',
+        ]
+        _exists = SCAN_HISTORY_FILE.exists()
+        with open(SCAN_HISTORY_FILE, 'a', newline='', encoding='utf-8') as _fh:
+            _w = _csv.DictWriter(_fh, fieldnames=_cols, extrasaction='ignore')
+            if not _exists:
+                _w.writeheader()
+            _ts = ist_now().strftime('%Y-%m-%d %H:%M')
+            for r in results:
+                _w.writerow({
+                    'timestamp':   _ts,
+                    'symbol':      r.get('symbol','').replace('.NS',''),
+                    'interval':    interval,
+                    'score':       r.get('_pick_score', 0),
+                    'verdict':     r.get('_verdict', ''),
+                    'price':       round(float(r.get('price', 0)), 2),
+                    'change_pct':  round(float(r.get('change_pct', 0)), 2),
+                    'rsi':         round(float(r.get('rsi', 0)), 1),
+                    'vwap':        r.get('vwap', ''),
+                    'vol_ratio':   round(float(r.get('vol_ratio', 0)), 2),
+                    'cpr_width':   round(float(r.get('cpr_width', 0)), 3) if r.get('cpr_width') else '',
+                    'rs_vs_nifty': round(float(r.get('rs_vs_nifty', 0)), 2) if r.get('rs_vs_nifty') is not None else '',
+                    'sector':      r.get('sector', ''),
+                    'nifty_state': nifty_state,
+                    'vix':         round(float(vix), 2) if vix else '',
+                    'gap_pct':     round(float(r.get('gap_pct', 0)), 2),
+                    'warmup':      r.get('warmup', ''),
+                })
+    except Exception:
+        pass   # never crash the app for logging
+
 
 def _f(v, fallback=0.0):
     try:
@@ -1749,6 +1796,39 @@ def calculate_intraday_indicators(df):
     df['R2']    = df['Pivot'] + (df['High'].shift(1) - df['Low'].shift(1))
     df['S2']    = df['Pivot'] - (df['High'].shift(1) - df['Low'].shift(1))
 
+    # ── Previous Day High / Low ───────────────────────────
+    # PDH = resistance level — stocks near PDH face selling
+    # PDL = support level — stocks near PDL may bounce
+    try:
+        import pytz as _ptz2
+        _ist2   = _ptz2.timezone('Asia/Kolkata')
+        _idx2   = pd.to_datetime(df.index)
+        if _idx2.tzinfo is None:
+            _idx2 = _idx2.tz_localize('UTC').tz_convert('Asia/Kolkata')
+        else:
+            _idx2 = _idx2.tz_convert('Asia/Kolkata')
+        _dates2   = sorted(set(_idx2.date))
+        df['PDH'] = np.nan
+        df['PDL'] = np.nan
+        df['PDC'] = np.nan
+        for _i2, _d2 in enumerate(_dates2):
+            if _i2 == 0:
+                continue
+            _prev_d2   = _dates2[_i2 - 1]
+            _prev_mask = _idx2.date == _prev_d2
+            _curr_mask = _idx2.date == _d2
+            if _prev_mask.any() and _curr_mask.any():
+                _pdh = float(df.loc[_prev_mask, 'High'].max())
+                _pdl = float(df.loc[_prev_mask, 'Low'].min())
+                _pdc = float(df.loc[_prev_mask, 'Close'].iloc[-1])
+                df.loc[_curr_mask, 'PDH'] = round(_pdh, 2)
+                df.loc[_curr_mask, 'PDL'] = round(_pdl, 2)
+                df.loc[_curr_mask, 'PDC'] = round(_pdc, 2)
+    except Exception:
+        df['PDH'] = np.nan
+        df['PDL'] = np.nan
+        df['PDC'] = np.nan
+
     # ── CPR — Central Pivot Range ─────────────────────────
     # Uses YESTERDAY's daily H/L/C (not per-candle)
     # Groups candles by date, takes previous day's H/L/C
@@ -2225,7 +2305,8 @@ def candle_warmup_status(df, interval='1minute'):
 
 def compute_intraday_pick_score(r):
     df     = r.get('df')
-    warmup, n_today, mins, pct = candle_warmup_status(df) if df is not None \
+    warmup, n_today, mins, pct = candle_warmup_status(df, r.get('interval','1minute')) \
+                                  if df is not None \
                                   else ('WARMING_UP', 0, 0, 0)
 
     if warmup == 'WARMING_UP':
@@ -2396,6 +2477,32 @@ def compute_intraday_pick_score(r):
     else:                     scores['Gap_Quality'] = -12
 
     # ════════════════════════════════════════════
+    # PREVIOUS DAY HIGH RESISTANCE
+    # Stocks near PDH face strong selling pressure
+    # ════════════════════════════════════════════
+    _pdh = r.get('pdh')
+    _pdl = r.get('pdl')
+    if _pdh and _pdl and _price > 0:
+        _pdh_dist_pct = (_pdh - _price) / _price * 100   # % away from PDH
+        _pdl_dist_pct = (_price - _pdl) / _price * 100   # % away from PDL
+
+        if _price > _pdh * 1.002:
+            # Broken above PDH = strong breakout signal
+            scores['PDH_Level'] = 10
+        elif _price >= _pdh * 0.995:
+            # Within 0.5% of PDH = at resistance — risky entry
+            scores['PDH_Level'] = -8
+        elif _price >= _pdh * 0.98:
+            # 0.5–2% below PDH = approaching resistance — caution
+            scores['PDH_Level'] = -3
+        elif _pdl_dist_pct <= 1.0:
+            # Near previous day low = support zone — potential bounce
+            scores['PDH_Level'] = 3
+        else:
+            # Healthy distance from PDH — no penalty, no bonus
+            scores['PDH_Level'] = 0
+
+    # ════════════════════════════════════════════
     # PRIORITY 7 — CONSECUTIVE RED DAYS
     # ════════════════════════════════════════════
     if _df is not None and len(_df) >= 10:
@@ -2440,9 +2547,42 @@ def compute_intraday_pick_score(r):
         elif _rs >= -0.5:
             scores['Rel_Strength'] = 0    # In line with market
         elif _rs >= -1.5:
-            scores['Rel_Strength'] = -8   # Underperforming
+            scores['Rel_Strength'] = -8
         else:
-            scores['Rel_Strength'] = -15  # Strongly underperforming — avoid
+            scores['Rel_Strength'] = -15
+
+    # ════════════════════════════════════════════
+    # PREVIOUS DAY HIGH/LOW RESISTANCE/SUPPORT
+    # PDH = strong resistance → avoid entry near it
+    # PDL = support → gives confidence if price holds
+    # ════════════════════════════════════════════
+    _pdh = r.get('pdh')
+    _pdl = r.get('pdl')
+    if _pdh and _pdl and _price > 0:
+        _dist_pdh_pct = (_pdh - _price) / _price * 100   # positive = price below PDH
+        _dist_pdl_pct = (_price - _pdl) / _price * 100   # positive = price above PDL
+
+        # Price approaching PDH (within 0.5%) = heavy resistance = bad entry
+        if _dist_pdh_pct < 0:
+            scores['PDH_Resistance'] = -12  # Already above PDH = breakout zone
+        elif _dist_pdh_pct < 0.3:
+            scores['PDH_Resistance'] = -10  # Right at PDH = strong resistance
+        elif _dist_pdh_pct < 0.6:
+            scores['PDH_Resistance'] = -5   # Close to PDH = caution
+        elif _dist_pdh_pct < 1.0:
+            scores['PDH_Resistance'] = 0    # Moderate distance
+        else:
+            scores['PDH_Resistance'] = 5    # Good room to run before resistance
+
+        # Price holding above PDL = support confirmed
+        if _dist_pdl_pct > 2.0:
+            scores['PDL_Support'] = 4       # Well above PDL = strong base
+        elif _dist_pdl_pct > 1.0:
+            scores['PDL_Support'] = 2
+        elif _dist_pdl_pct > 0:
+            scores['PDL_Support'] = 0       # Just above PDL = weak base
+        else:
+            scores['PDL_Support'] = -8      # Below PDL = broke support = avoid
 
     # ════════════════════════════════════════════
     # FINAL VERDICT WITH HARD CAPS
@@ -2903,6 +3043,34 @@ def build_intraday_chart(df, symbol, interval):
             font=dict(size=10, color=_w_color),
             bgcolor='white', bordercolor=_w_color, borderwidth=1)
 
+    # ── Previous Day High / Low ────────────────────────────
+    if 'PDH' in df_plot.columns and not pd.isna(df_plot['PDH'].iloc[-1]):
+        _pdh_v = float(df_plot['PDH'].iloc[-1])
+        _pdl_v = float(df_plot['PDL'].iloc[-1]) if not pd.isna(df_plot['PDL'].iloc[-1]) else None
+        _x0p   = df_plot.index[0]
+        _x1p   = df_plot.index[-1]
+        _last_p = float(df_plot['Close'].iloc[-1])
+
+        # PDH line — red (resistance)
+        _pdh_clr = '#ef4444' if abs(_last_p - _pdh_v) / _pdh_v < 0.005 else '#f97316'
+        fig.add_shape(type="line", x0=_x0p, x1=_x1p, y0=_pdh_v, y1=_pdh_v,
+                      line=dict(color=_pdh_clr, width=1.5, dash='dashdot'), row=1, col=1)
+        fig.add_annotation(x=_x1p, y=_pdh_v,
+                           text=f"PDH ₹{_pdh_v:,.1f}",
+                           showarrow=False, xanchor='right',
+                           font=dict(size=10, color=_pdh_clr),
+                           bgcolor='white', bordercolor=_pdh_clr, borderwidth=1)
+
+        # PDL line — green (support)
+        if _pdl_v:
+            fig.add_shape(type="line", x0=_x0p, x1=_x1p, y0=_pdl_v, y1=_pdl_v,
+                          line=dict(color='#22c55e', width=1.2, dash='dashdot'), row=1, col=1)
+            fig.add_annotation(x=_x1p, y=_pdl_v,
+                               text=f"PDL ₹{_pdl_v:,.1f}",
+                               showarrow=False, xanchor='right',
+                               font=dict(size=10, color='#22c55e'),
+                               bgcolor='white', bordercolor='#22c55e', borderwidth=1)
+
     # ── Buy/Sell signals ──
     if len(buys):
         fig.add_trace(go.Scatter(x=buys.index, y=buys['Close'], mode='markers',
@@ -3052,6 +3220,7 @@ with st.sidebar:
         ("🔍  Scanners",      "Scanners"),
         ("💼  Portfolio",     "Portfolio"),
         ("🔔  Alert Log",     "Alert Log"),
+        ("📁  Scan History",  "Scan History"),
     ]
     st.markdown("<div class='sb-nav-section'>Navigation</div>", unsafe_allow_html=True)
     for _pkey, _plabel in _NAV:
@@ -3648,7 +3817,7 @@ if _show_scanner:
                 price     = float(latest['Close']) if not pd.isna(latest['Close']) else 0.0
 
                 # ── Candle warmup status ──────────────────
-                _warmup, _n_today, _mins, _pct_ready = candle_warmup_status(df)
+                _warmup, _n_today, _mins, _pct_ready = candle_warmup_status(df, interval)
                 trade_plan = get_intraday_trade_plan(df, capital, risk_pct)
                 liquidity  = compute_liquidity(df, price or 1, capital)
 
@@ -3669,6 +3838,7 @@ if _show_scanner:
                     'n_today':     _n_today,
                     'mins_open':   _mins,
                     'pct_ready':   _pct_ready,
+                    'interval':    interval,
                     'price':       price,
                     'change_pct':  float(((latest['Close']/prev['Close'])-1)*100)
                                    if not pd.isna(prev['Close']) and prev['Close'] != 0 else 0.0,
@@ -3701,12 +3871,19 @@ if _show_scanner:
                     'sector':    SECTOR_MAP.get(sym_clean, ''),
                     'gap_pct':   float(((latest['Open'] - prev['Close']) / prev['Close'] * 100))
                                  if not pd.isna(prev['Close']) and prev['Close'] != 0 else 0.0,
+                    # Previous day high/low for resistance/support scoring
+                    'pdh':       float(prev['High'])  if 'High'  in prev.index and not pd.isna(prev['High'])  else None,
+                    'pdl':       float(prev['Low'])   if 'Low'   in prev.index and not pd.isna(prev['Low'])   else None,
                     # ── Relative Strength vs Nifty ──
                     'rs_vs_nifty': compute_relative_strength(
                                      float(((latest['Close']/prev['Close'])-1)*100)
                                      if not pd.isna(prev['Close']) and prev['Close'] != 0 else 0.0,
                                      st.session_state.get('nifty_context', {}).get('nifty_chg', 0.0)
                                   ),
+                    # ── Previous Day High / Low ──
+                    'pdh': float(latest['PDH']) if 'PDH' in df.columns and not pd.isna(latest.get('PDH', np.nan)) else None,
+                    'pdl': float(latest['PDL']) if 'PDL' in df.columns and not pd.isna(latest.get('PDL', np.nan)) else None,
+                    'pdc': float(latest['PDC']) if 'PDC' in df.columns and not pd.isna(latest.get('PDC', np.nan)) else None,
                 }
                 ps, _, vrd   = compute_intraday_pick_score(r)
                 r['_pick_score'] = ps
@@ -3756,6 +3933,15 @@ if _show_scanner:
         st.session_state['scan_time']     = ist_now().strftime('%d %b %Y, %H:%M IST')
         st.session_state['scan_duration'] = _scan_duration
         st.session_state['scan_total']    = total
+
+        # ── Auto-save scan history for ML training data ──
+        _ctx_for_csv = st.session_state.get('nifty_context', {})
+        save_scan_history(
+            raw_results,
+            interval,
+            _ctx_for_csv.get('state', 'UNKNOWN'),
+            _ctx_for_csv.get('vix'),
+        )
         st.rerun()
 
     all_results = st.session_state.get('scan_results', [])
@@ -4065,10 +4251,16 @@ if _show_scanner:
         _rs     = _r.get('rs_vs_nifty', 0.0) or 0.0
         _cpr_w  = _r.get('cpr_width')
         _wu     = _r.get('warmup', 'READY')
+        _iv     = _r.get('interval', '1minute')
+        _cpd    = CANDLES_PER_DAY.get(_iv, 375)
         _verd   = _r.get('_verdict', '')
 
-        # Skip warming up stocks
-        if _wu in ['WARMING_UP', 'PARTIAL']:
+        # Skip WARMING_UP always
+        # Skip PARTIAL only for fast timeframes (1min/3min) — not for 15min/60min
+        # 60min: PARTIAL = 2+ candles = 2 hours of data = enough to trade
+        if _wu == 'WARMING_UP':
+            continue
+        if _wu == 'PARTIAL' and _cpd >= 75:   # 75+ cpd = 1min or 3min
             continue
 
         # Filter 1 — Score ≥ 65
@@ -4081,9 +4273,13 @@ if _show_scanner:
             _reject_reasons[_sym] = 'VWAP Below'
             continue
 
-        # Filter 3 — Volume ≥ 1.5×
-        if _vol < 1.5:
-            _reject_reasons[_sym] = f'Vol {_vol:.1f}× < 1.5×'
+        # Filter 3 — Volume threshold (interval-aware)
+        # 1min/3min: need 1.5× (intraday momentum)
+        # 5min/15min: need 1.3× (slightly lower — candles aggregate more)
+        # 60min: need 1.2× (hourly candles rarely spike 1.5×)
+        _vol_threshold = (1.2 if _cpd <= 10 else (1.3 if _cpd <= 25 else 1.5))
+        if _vol < _vol_threshold:
+            _reject_reasons[_sym] = f'Vol {_vol:.1f}× < {_vol_threshold}×'
             continue
 
         # Filter 4 — Liquidity EXCELLENT or HIGH
@@ -4329,11 +4525,29 @@ if _show_scanner:
                            else ('⚠️W' if _r.get('cpr_width') else '—'))),
             'RS':         (f"{'+' if (_r.get('rs_vs_nifty') or 0)>=0 else ''}"
                            f"{(_r.get('rs_vs_nifty') or 0):.1f}%"),
+            'PDH':        (f"₹{_r['pdh']:,.1f}" if _r.get('pdh') else '—'),
             'Alerts':     _alt_icons if _alt_icons else '—',
         })
     _sum_df = pd.DataFrame(_summary_rows)
 
-    st.markdown("<div class='section-header'>📋 All Results — Click a stock below to analyse</div>", unsafe_allow_html=True)
+    _sh_col1, _sh_col2 = st.columns([4, 1])
+    with _sh_col1:
+        st.markdown("<div class='section-header'>📋 All Results — Click a stock below to analyse</div>",
+                    unsafe_allow_html=True)
+    with _sh_col2:
+        if SCAN_HISTORY_FILE.exists():
+            try:
+                _hist_bytes = SCAN_HISTORY_FILE.read_bytes()
+                st.download_button(
+                    "📥 History CSV",
+                    data=_hist_bytes,
+                    file_name="investo_scan_history.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                    help="Download all scan history for analysis / ML training"
+                )
+            except Exception:
+                pass
 
     # Color-code verdict column
     def _color_verdict(val):
@@ -4445,7 +4659,7 @@ if _show_scanner:
 
                     _new_tp  = get_intraday_trade_plan(_new_df, capital, risk_pct)
                     _new_liq = compute_liquidity(_new_df, _new_price or 1, capital)
-                    _wu, _nt, _mo, _pr = candle_warmup_status(_new_df)
+                    _wu, _nt, _mo, _pr = candle_warmup_status(_new_df, interval)
 
                     _new_r = {
                         'symbol':      _refresh_sym,
@@ -5167,6 +5381,69 @@ if _show_scanner:
             f"font-size:12px;color:{_adv_c}'>"
             f"⏱ <b>MTF Signal:</b> {_mtf_advice[_align]}</div>",
             unsafe_allow_html=True)
+
+    # ── Previous Day High / Low Panel ─────────────────────
+    _pdh2 = result.get('pdh')
+    _pdl2 = result.get('pdl')
+    _pr2  = result.get('price', 0)
+    if _pdh2 and _pdl2 and _pr2 > 0:
+        _d_pdh  = (_pdh2 - _pr2) / _pr2 * 100
+        _d_pdl  = (_pr2 - _pdl2) / _pr2 * 100
+        _pdh_clr = ('#dc2626' if _d_pdh < 0.3 else ('#d97706' if _d_pdh < 1.0 else '#16a34a'))
+        _pdh_lbl = ('🚫 At/above PDH — strong resistance' if _d_pdh < 0
+                    else '⚠️ Right at PDH — heavy resistance' if _d_pdh < 0.3
+                    else '⚠️ Near PDH — caution' if _d_pdh < 1.0
+                    else '✅ Room to run before PDH')
+        _pdl_clr = ('#dc2626' if _d_pdl < 0 else ('#d97706' if _d_pdl < 0.5 else '#16a34a'))
+        _pdl_lbl = ('🚫 Below PDL — broke support' if _d_pdl < 0
+                    else '⚠️ Near PDL — weak base' if _d_pdl < 0.5
+                    else '✅ Holding above PDL')
+
+        st.markdown("<div class='section-header'>📏 Previous Day Levels</div>",
+                    unsafe_allow_html=True)
+        _pc1, _pc2, _pc3 = st.columns(3)
+        with _pc1:
+            st.markdown(
+                f"<div style='background:{_pdh_clr}22;border:1px solid {_pdh_clr}44;"
+                f"border-radius:10px;padding:12px 14px'>"
+                f"<div style='font-size:10px;font-weight:700;color:{_pdh_clr};"
+                f"letter-spacing:1px'>PREV DAY HIGH</div>"
+                f"<div style='font-size:22px;font-weight:800;color:{_pdh_clr};"
+                f"font-family:JetBrains Mono;margin:4px 0'>₹{_pdh2:,.2f}</div>"
+                f"<div style='font-size:11px;color:{_pdh_clr}'>"
+                f"{'+' if _d_pdh>=0 else ''}{_d_pdh:.2f}% away</div>"
+                f"<div style='font-size:11px;color:{_pdh_clr};margin-top:2px'>{_pdh_lbl}</div>"
+                f"</div>", unsafe_allow_html=True)
+        with _pc2:
+            st.markdown(
+                f"<div style='background:{_pdl_clr}22;border:1px solid {_pdl_clr}44;"
+                f"border-radius:10px;padding:12px 14px'>"
+                f"<div style='font-size:10px;font-weight:700;color:{_pdl_clr};"
+                f"letter-spacing:1px'>PREV DAY LOW</div>"
+                f"<div style='font-size:22px;font-weight:800;color:{_pdl_clr};"
+                f"font-family:JetBrains Mono;margin:4px 0'>₹{_pdl2:,.2f}</div>"
+                f"<div style='font-size:11px;color:{_pdl_clr}'>"
+                f"{'+' if _d_pdl>=0 else ''}{_d_pdl:.2f}% above</div>"
+                f"<div style='font-size:11px;color:{_pdl_clr};margin-top:2px'>{_pdl_lbl}</div>"
+                f"</div>", unsafe_allow_html=True)
+        with _pc3:
+            _range   = _pdh2 - _pdl2
+            _pos_pct = ((_pr2 - _pdl2) / _range * 100) if _range > 0 else 50
+            _pos_clr = '#16a34a' if _pos_pct > 60 else ('#d97706' if _pos_pct > 40 else '#dc2626')
+            st.markdown(
+                f"<div style='background:#f8fafc;border:1px solid #e2e8f0;"
+                f"border-radius:10px;padding:12px 14px'>"
+                f"<div style='font-size:10px;font-weight:700;color:#64748b;"
+                f"letter-spacing:1px'>POSITION IN RANGE</div>"
+                f"<div style='font-size:22px;font-weight:800;color:{_pos_clr};"
+                f"font-family:JetBrains Mono;margin:4px 0'>{_pos_pct:.0f}%</div>"
+                f"<div style='font-size:11px;color:#64748b'>"
+                f"Range ₹{_range:,.2f} &nbsp;·&nbsp; "
+                f"{'Upper half — momentum' if _pos_pct>50 else 'Lower half — recovery'}</div>"
+                f"<div style='background:#e2e8f0;border-radius:3px;height:5px;margin-top:8px'>"
+                f"<div style='background:{_pos_clr};height:5px;border-radius:3px;"
+                f"width:{min(100,int(_pos_pct))}%'></div></div>"
+                f"</div>", unsafe_allow_html=True)
 
     # ── CPR Panel ─────────────────────────────────────────
     _cpr_tc  = result.get('cpr_tc')
