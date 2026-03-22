@@ -310,13 +310,25 @@ def evaluate_alerts(result, portfolio):
         alerts.append({'type': 'STRONG_BUY', 'msg': msg, 'color': '#15803d', 'bg': '#dcfce7', 'icon': '🚨'})
 
     # ── ⚡ VOLUME SURGE ALERT ──────────────────────────────
-    # Fires when volume explodes (3×+) regardless of direction
+    # Tiered alerts — institutional surge gets stronger label
     if vol_ratio >= 3.0:
         direction = "📈 BULL" if price > float(result['prev']['Close']) else "📉 BEAR"
-        msg = (f"⚡ VOLUME SURGE — {sym} @ ₹{price:,.2f} | "
+        if vol_ratio >= 15.0:
+            _tier = "🏦 INSTITUTIONAL SURGE"
+            _icon = '🏦'
+        elif vol_ratio >= 8.0:
+            _tier = "🔥 MAJOR VOLUME"
+            _icon = '🔥'
+        elif vol_ratio >= 5.0:
+            _tier = "⚡ STRONG SURGE"
+            _icon = '⚡'
+        else:
+            _tier = "⚡ VOLUME SURGE"
+            _icon = '⚡'
+        msg = (f"{_tier} — {sym} @ ₹{price:,.2f} | "
                f"{vol_ratio:.1f}× avg volume · {direction}")
-        _add_alert(sym, 'VOL_SURGE', msg, price, '⚡')
-        alerts.append({'type': 'VOL_SURGE', 'msg': msg, 'color': '#d97706', 'bg': '#fffbeb', 'icon': '⚡'})
+        _add_alert(sym, 'VOL_SURGE', msg, price, _icon)
+        alerts.append({'type': 'VOL_SURGE', 'msg': msg, 'color': '#d97706', 'bg': '#fffbeb', 'icon': _icon})
 
     # ── ⚠️ VWAP BREAKDOWN ALERT (for open positions) ──────
     open_syms = [p.get('symbol','') for p in portfolio if p.get('status') == 'OPEN']
@@ -2076,15 +2088,28 @@ def score_intraday_signal(row, prev, df_slice):
     # 4. Volume — HIGH WEIGHT for intraday (20 pts)
     vob, vos = 0, 0
     vr = row['Volume_Ratio']
-    if vr > 3.0:
+    # Weighted volume — institutional surge (8×+) far more significant than retail (2×)
+    if vr > 15.0:
+        if row['Close'] > prev['Close']:   vob = 20; reasons.append("🏦 Institutional Surge Bull")
+        else:                              vos = 20
+    elif vr > 8.0:
+        if row['Close'] > prev['Close']:   vob = 17; reasons.append("🔥 Major Volume Bull")
+        else:                              vos = 17
+    elif vr > 5.0:
         if row['Close'] > prev['Close']:   vob = 14; reasons.append("🔥 Surge Volume Bull")
         else:                              vos = 14
+    elif vr > 3.0:
+        if row['Close'] > prev['Close']:   vob = 11; reasons.append("Strong Volume Bull")
+        else:                              vos = 11
     elif vr > 2.0:
-        if row['Close'] > prev['Close']:   vob = 10; reasons.append("Strong Volume Bull")
-        else:                              vos = 10
+        if row['Close'] > prev['Close']:   vob = 8;  reasons.append("High Volume Bull")
+        else:                              vos = 8
     elif vr > 1.5:
-        if row['Close'] > prev['Close']:   vob = 6;  reasons.append("High Volume")
-        else:                              vos = 6
+        if row['Close'] > prev['Close']:   vob = 5;  reasons.append("Above Avg Volume")
+        else:                              vos = 5
+    elif vr > 1.0:
+        if row['Close'] > prev['Close']:   vob = 2
+        else:                              vos = 2
     bull += vob; bear += vos; bd['Volume'] = (vob, vos)
 
     ob, os2 = 0, 0
@@ -2319,7 +2344,12 @@ def compute_intraday_pick_score(r):
     # ── Partial guard ─────────────────────────────────────
     if warmup == 'PARTIAL':
         vol = r['vol_ratio']
-        scores['Volume']    = 10 if vol >= 3.0 else (8 if vol >= 2.0 else (5 if vol >= 1.5 else 0))
+        scores['Volume']    = (20 if vol >= 15.0 else
+                               17 if vol >= 8.0  else
+                               14 if vol >= 5.0  else
+                               10 if vol >= 3.0  else
+                               8  if vol >= 2.0  else
+                               5  if vol >= 1.5  else 0)
         scores['VWAP']      = 12 if r['vwap'] == 'ABOVE' else 0
         liq = r.get('liquidity', {})
         scores['Liquidity'] = 7 if liq.get('grade') in ['EXCELLENT','HIGH'] else 0
@@ -2372,7 +2402,26 @@ def compute_intraday_pick_score(r):
     scores['ADX']    = 10 if adx >= 25 else (6 if adx >= 20 else 0)
     scores['VWAP']   = 12 if r['vwap'] == 'ABOVE' else 0
     vol = r['vol_ratio']
-    scores['Volume'] = 10 if vol >= 3.0 else (8 if vol >= 2.0 else (5 if vol >= 1.5 else (2 if vol >= 1.0 else 0)))
+    # Weighted volume scoring — institutional surge (8×+) is far more significant
+    # Also checks direction: high volume in direction of trend = stronger signal
+    _chg = r.get('change_pct', 0.0)
+    _vol_dir_match = (_chg > 0)   # price up = bullish volume confirmation
+    if vol >= 15.0:
+        scores['Volume'] = 22 if _vol_dir_match else 8   # institutional surge
+    elif vol >= 8.0:
+        scores['Volume'] = 19 if _vol_dir_match else 6   # major volume event
+    elif vol >= 5.0:
+        scores['Volume'] = 16 if _vol_dir_match else 4   # strong institutional
+    elif vol >= 3.0:
+        scores['Volume'] = 12 if _vol_dir_match else 3   # solid buying
+    elif vol >= 2.0:
+        scores['Volume'] = 8  if _vol_dir_match else 2   # above average
+    elif vol >= 1.5:
+        scores['Volume'] = 5  if _vol_dir_match else 1   # moderate interest
+    elif vol >= 1.0:
+        scores['Volume'] = 2                              # in line with average
+    else:
+        scores['Volume'] = -5                             # low volume = no conviction
     bb = r['bb_pos']
     scores['BB']     = 4 if bb == 'LOWER' else (2 if bb == 'MID' else 0)
     gap = r['live_bull'] - r['live_bear']
@@ -4516,7 +4565,11 @@ if _show_scanner:
             'Signals':    _wu_display,
             'RSI':        f"{_r['rsi']:.0f}",
             'VWAP':       _r['vwap'],
-            'Vol×':       f"{_r['vol_ratio']:.1f}×",
+            'Vol×':       (f"🏦{_r['vol_ratio']:.0f}×" if _r['vol_ratio'] >= 15 else
+                           f"🔥{_r['vol_ratio']:.0f}×" if _r['vol_ratio'] >= 8  else
+                           f"⚡{_r['vol_ratio']:.1f}×" if _r['vol_ratio'] >= 5  else
+                           f"↑{_r['vol_ratio']:.1f}×"  if _r['vol_ratio'] >= 2  else
+                           f"{_r['vol_ratio']:.1f}×"),
             'Liquidity':  _liq.get('grade','—'),
             'Conf%':      f"{_r['live_conf']}%",
             'Source':     '⚡ Kite' if _r.get('data_src') == 'kite' else '⏳ yfinance',
