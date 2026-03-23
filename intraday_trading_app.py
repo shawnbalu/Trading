@@ -1133,11 +1133,11 @@ def get_nifty_market_state(kite=None):
     """
     Fetch Nifty 50 + India VIX Index (raw value).
     VIX thresholds calibrated for Indian market:
-      < 12  → CALM      (very rare, ideal)
-      12-15 → NORMAL    (best trading conditions)
-      15-20 → ELEVATED  (slight caution)
-      20-25 → HIGH      (reduce position size)
-      > 25  → EXTREME   (avoid intraday)
+      < 12  -> CALM      (very rare, ideal)
+      12-15 -> NORMAL    (best trading conditions)
+      15-20 -> ELEVATED  (slight caution)
+      20-25 -> HIGH      (reduce position size)
+      > 25  -> EXTREME   (avoid intraday)
     """
     result = {
         'state':      'UNKNOWN',
@@ -1154,7 +1154,6 @@ def get_nifty_market_state(kite=None):
         _now_ist   = datetime.now(_ist)
         _today_ist = _now_ist.date()
 
-        # Cache refreshes every 15 minutes
         _slot    = str(_now_ist.minute // 15)
         _now_str = _now_ist.strftime('%Y%m%d_%H') + _slot
 
@@ -1176,7 +1175,7 @@ def get_nifty_market_state(kite=None):
                 _ndf.index = _ndf.index.tz_convert('Asia/Kolkata')
             _DATA_CACHE[_ck] = (_ndf, 'yfinance')
 
-        # ── Fetch VIX — 5-min, today's latest value ───────
+        # ── Fetch VIX ─────────────────────────────────────
         _vix_val = None
         _vck = f"^VIX_5m_{_now_str}"
         try:
@@ -1224,243 +1223,7 @@ def get_nifty_market_state(kite=None):
         result['nifty_vwap'] = round(_vwap, 2)
         result['ema_trend']  = 'BULL' if _ema9 > _ema21 else 'BEAR'
 
-        # ── VIX Index classification ──────────────────────
-        if _vix_val is not None:
-            result['vix'] = round(_vix_val, 2)
-            if _vix_val < 12:
-                result['vix_level'] = 'CALM'      # Very rare — ideal conditions
-            elif _vix_val < 15:
-                result['vix_level'] = 'NORMAL'    # Best trading conditions
-            elif _vix_val < 20:
-                result['vix_level'] = 'ELEVATED'  # Slight caution
-            elif _vix_val < 25:
-                result['vix_level'] = 'HIGH'      # Reduce position size
-            else:
-                result['vix_level'] = 'EXTREME'   # VIX > 25 — avoid intraday
-
-        # ── Market state: price % is primary ─────────────
-        _above_vwap = _last > _vwap
-        if   _chg >= 0.5 and _above_vwap:  result['state'] = 'BULL'
-        elif _chg <= -0.5 and not _above_vwap: result['state'] = 'BEAR'
-        elif _chg >= 0.5:  result['state'] = 'BULL'
-        elif _chg <= -0.5: result['state'] = 'BEAR'
-        elif _chg >= 0.2:  result['state'] = 'BULL'
-        elif _chg <= -0.2: result['state'] = 'BEAR'
-        else:              result['state'] = 'SIDEWAYS'
-
-    except Exception:
-        pass
-
-    return result
-    try:
-        import pytz as _pytz
-        _ist       = _pytz.timezone('Asia/Kolkata')
-        _now_ist   = datetime.now(_ist)
-        _today_ist = _now_ist.date()
-
-        # Cache refreshes every 15 minutes
-        _slot    = str(_now_ist.minute // 15)
-        _now_str = _now_ist.strftime('%Y%m%d_%H') + _slot
-
-        # ── Fetch Nifty 5-min ─────────────────────────────
-        _ck = f"^NSEI_5m_{_now_str}"
-        if _ck in _DATA_CACHE:
-            _ndf, _ = _DATA_CACHE[_ck]
-        else:
-            for _old in [k for k in list(_DATA_CACHE.keys()) if k.startswith('^NSEI_5m_')]:
-                del _DATA_CACHE[_old]
-            _ndf = yf.Ticker('^NSEI').history(period='5d', interval='5m', auto_adjust=True)
-            if _ndf is None or _ndf.empty:
-                return result
-            _ndf.columns = [c.split(' ')[0] if ' ' in str(c) else c for c in _ndf.columns]
-            _ndf = _ndf[['Open','High','Low','Close','Volume']].dropna()
-            if _ndf.index.tzinfo is None:
-                _ndf.index = _ndf.index.tz_localize('UTC').tz_convert('Asia/Kolkata')
-            else:
-                _ndf.index = _ndf.index.tz_convert('Asia/Kolkata')
-            _DATA_CACHE[_ck] = (_ndf, 'yfinance')
-
-        # ── Fetch VIX — 1 YEAR daily for percentile rank ──
-        _vix_val   = None
-        _vix_score = None
-        _vix_1y_lo = None
-        _vix_1y_hi = None
-        _vck = f"^VIX_1y_{_now_str[:10]}"   # daily cache key (date only)
-
-        try:
-            if _vck in _DATA_CACHE:
-                _vdf_1y, _ = _DATA_CACHE[_vck]
-            else:
-                for _old in [k for k in list(_DATA_CACHE.keys()) if k.startswith('^VIX_1y_')]:
-                    del _DATA_CACHE[_old]
-                # Fetch 1 year of daily VIX data for percentile calculation
-                _vdf_1y = yf.Ticker('^INDIAVIX').history(period='1y', interval='1d', auto_adjust=True)
-                if _vdf_1y is not None and not _vdf_1y.empty:
-                    _vdf_1y.columns = [c.split(' ')[0] if ' ' in str(c) else c for c in _vdf_1y.columns]
-                    _DATA_CACHE[_vck] = (_vdf_1y, 'yfinance')
-
-            if _vdf_1y is not None and not _vdf_1y.empty and len(_vdf_1y) >= 30:
-                # Current VIX = latest daily close
-                _vix_val   = float(_vdf_1y['Close'].iloc[-1])
-                _vix_1y_lo = float(_vdf_1y['Low'].min())
-                _vix_1y_hi = float(_vdf_1y['High'].max())
-
-                # ── VIX Score = percentile rank ────────────
-                # How many of the last 252 days had VIX BELOW today's value?
-                _closes    = _vdf_1y['Close'].values
-                _below     = float(np.sum(_closes < _vix_val))
-                _vix_score = round((_below / len(_closes)) * 100, 1)
-                # Score 0 = today's VIX is lowest in 1 year (very calm)
-                # Score 100 = today's VIX is highest in 1 year (extreme fear)
-
-        except Exception:
-            pass
-
-        if len(_ndf) < 5:
-            return result
-
-        # ── Today's Nifty candles (IST-aware) ─────────────
-        _today_df = _ndf[_ndf.index.date == _today_ist]
-        if len(_today_df) < 3:
-            _all_dates = sorted(set(_ndf.index.date))
-            _today_df  = _ndf[_ndf.index.date == _all_dates[-1]] if _all_dates else _ndf.tail(20)
-
-        _last  = float(_today_df['Close'].iloc[-1])
-        _open_ = float(_today_df['Open'].iloc[0])
-        _chg   = (_last - _open_) / _open_ * 100
-        _ema9  = float(_today_df['Close'].ewm(span=9,  adjust=False).mean().iloc[-1])
-        _ema21 = float(_today_df['Close'].ewm(span=21, adjust=False).mean().iloc[-1])
-        _tp    = (_today_df['High'] + _today_df['Low'] + _today_df['Close']) / 3
-        _vwap  = float((_tp * _today_df['Volume']).sum() / (_today_df['Volume'].sum() + 1e-9))
-
-        result['nifty_chg']   = round(_chg, 2)
-        result['nifty_last']  = round(_last, 2)
-        result['nifty_vwap']  = round(_vwap, 2)
-        result['ema_trend']   = 'BULL' if _ema9 > _ema21 else 'BEAR'
-        result['vix']         = round(_vix_val, 2)   if _vix_val   is not None else None
-        result['vix_score']   = round(_vix_score, 1) if _vix_score is not None else None
-        result['vix_1y_low']  = round(_vix_1y_lo, 2) if _vix_1y_lo is not None else None
-        result['vix_1y_high'] = round(_vix_1y_hi, 2) if _vix_1y_hi is not None else None
-
-        # ── VIX Score classification ──────────────────────
-        # Based on percentile rank — not arbitrary fixed thresholds
-        if _vix_score is not None:
-            if _vix_score <= 20:
-                result['vix_level'] = 'CALM'       # Bottom 20% of year — very calm
-            elif _vix_score <= 40:
-                result['vix_level'] = 'NORMAL'     # Below average fear
-            elif _vix_score <= 60:
-                result['vix_level'] = 'MODERATE'   # Average fear — neutral
-            elif _vix_score <= 80:
-                result['vix_level'] = 'ELEVATED'   # Above average fear — caution
-            else:
-                result['vix_level'] = 'EXTREME'    # Top 20% of year — avoid intraday
-        elif _vix_val is not None:
-            # Fallback if 1-year data unavailable
-            result['vix_level'] = ('CALM' if _vix_val < 12 else
-                                   'NORMAL' if _vix_val < 15 else
-                                   'MODERATE' if _vix_val < 18 else
-                                   'ELEVATED' if _vix_val < 22 else 'EXTREME')
-
-        # ── Market state: price % is primary ─────────────
-        _above_vwap = _last > _vwap
-        if   _chg >= 0.5 and _above_vwap: result['state'] = 'BULL'
-        elif _chg <= -0.5 and not _above_vwap: result['state'] = 'BEAR'
-        elif _chg >= 0.5:  result['state'] = 'BULL'
-        elif _chg <= -0.5: result['state'] = 'BEAR'
-        elif _chg >= 0.2:  result['state'] = 'BULL'
-        elif _chg <= -0.2: result['state'] = 'BEAR'
-        else:              result['state'] = 'SIDEWAYS'
-
-    except Exception:
-        pass
-
-    return result
-    try:
-        import pytz as _pytz
-        _ist        = _pytz.timezone('Asia/Kolkata')
-        _now_ist    = datetime.now(_ist)
-        _today_ist  = _now_ist.date()   # Always IST date, not UTC
-
-        # Cache key: refresh every 15 minutes
-        _slot    = str(_now_ist.minute // 15)
-        _now_str = _now_ist.strftime('%Y%m%d_%H') + _slot
-
-        # ── Fetch Nifty ───────────────────────────────────
-        _ck = f"^NSEI_5m_{_now_str}"
-        if _ck in _DATA_CACHE:
-            _ndf, _ = _DATA_CACHE[_ck]
-        else:
-            for _old in [k for k in list(_DATA_CACHE.keys()) if k.startswith('^NSEI_5m_')]:
-                del _DATA_CACHE[_old]
-            _ndf = yf.Ticker('^NSEI').history(period='5d', interval='5m', auto_adjust=True)
-            if _ndf is None or _ndf.empty:
-                return result
-            _ndf.columns = [c.split(' ')[0] if ' ' in str(c) else c for c in _ndf.columns]
-            _ndf = _ndf[['Open','High','Low','Close','Volume']].dropna()
-            # Convert index to IST for correct date comparison
-            if _ndf.index.tzinfo is None:
-                _ndf.index = _ndf.index.tz_localize('UTC').tz_convert('Asia/Kolkata')
-            else:
-                _ndf.index = _ndf.index.tz_convert('Asia/Kolkata')
-            _DATA_CACHE[_ck] = (_ndf, 'yfinance')
-
-        # ── Fetch VIX ─────────────────────────────────────
-        _vix_val = None
-        _vck = f"^VIX_5m_{_now_str}"
-        try:
-            if _vck in _DATA_CACHE:
-                _vdf, _ = _DATA_CACHE[_vck]
-            else:
-                for _old in [k for k in list(_DATA_CACHE.keys()) if k.startswith('^VIX_5m_')]:
-                    del _DATA_CACHE[_old]
-                _vdf = yf.Ticker('^INDIAVIX').history(period='5d', interval='5m', auto_adjust=True)
-                if _vdf is not None and not _vdf.empty:
-                    _vdf.columns = [c.split(' ')[0] if ' ' in str(c) else c for c in _vdf.columns]
-                    if _vdf.index.tzinfo is None:
-                        _vdf.index = _vdf.index.tz_localize('UTC').tz_convert('Asia/Kolkata')
-                    else:
-                        _vdf.index = _vdf.index.tz_convert('Asia/Kolkata')
-                    _DATA_CACHE[_vck] = (_vdf, 'yfinance')
-            if _vdf is not None and not _vdf.empty:
-                # Get today's VIX candles using IST date
-                _vdf_today = _vdf[_vdf.index.date == _today_ist]
-                if len(_vdf_today) > 0:
-                    _vix_val = float(_vdf_today['Close'].iloc[-1])
-                else:
-                    _vix_val = float(_vdf['Close'].iloc[-1])  # fallback to latest
-        except Exception:
-            pass
-
-        if len(_ndf) < 5:
-            return result
-
-        # ── Today's Nifty candles using IST date ──────────
-        _today_df = _ndf[_ndf.index.date == _today_ist]
-        if len(_today_df) < 3:
-            # Market not open yet or weekend — use last trading day
-            _all_dates  = sorted(set(_ndf.index.date))
-            _today_df   = _ndf[_ndf.index.date == _all_dates[-1]] if _all_dates else _ndf.tail(20)
-
-        _last  = float(_today_df['Close'].iloc[-1])
-        _open_ = float(_today_df['Open'].iloc[0])
-        _chg   = (_last - _open_) / _open_ * 100
-
-        _ema9  = float(_today_df['Close'].ewm(span=9,  adjust=False).mean().iloc[-1])
-        _ema21 = float(_today_df['Close'].ewm(span=21, adjust=False).mean().iloc[-1])
-
-        _tp   = (_today_df['High'] + _today_df['Low'] + _today_df['Close']) / 3
-        _vwap = float((_tp * _today_df['Volume']).sum() / (_today_df['Volume'].sum() + 1e-9))
-        _above_vwap = _last > _vwap
-
-        result['nifty_chg']  = round(_chg, 2)
-        result['nifty_last'] = round(_last, 2)
-        result['nifty_vwap'] = round(_vwap, 2)
-        result['ema_trend']  = 'BULL' if _ema9 > _ema21 else 'BEAR'
-
         # ── VIX classification ────────────────────────────
-        # Threshold raised: 22 is NOT extreme for Indian markets
-        # Average VIX in volatile periods is 18-22 — this is HIGH, not EXTREME
         if _vix_val is not None:
             result['vix'] = round(_vix_val, 2)
             if _vix_val < 12:
@@ -1470,27 +1233,19 @@ def get_nifty_market_state(kite=None):
             elif _vix_val < 20:
                 result['vix_level'] = 'ELEVATED'
             elif _vix_val < 25:
-                result['vix_level'] = 'HIGH'      # 20-25: caution, not extreme
+                result['vix_level'] = 'HIGH'
             else:
-                result['vix_level'] = 'EXTREME'   # Only >25 is truly extreme
+                result['vix_level'] = 'EXTREME'
 
         # ── Market state: price % is primary ─────────────
-        # VIX does NOT override state — it only adds scoring penalty
-        # This prevents false BEAR when VIX is 22 but Nifty is up 0.5%
-        if _chg >= 0.5 and _above_vwap:
-            result['state'] = 'BULL'
-        elif _chg <= -0.5 and not _above_vwap:
-            result['state'] = 'BEAR'
-        elif _chg >= 0.5:
-            result['state'] = 'BULL'       # Up even if below VWAP = lean bull
-        elif _chg <= -0.5:
-            result['state'] = 'BEAR'       # Down even if above VWAP = lean bear
-        elif _chg >= 0.2:
-            result['state'] = 'BULL'
-        elif _chg <= -0.2:
-            result['state'] = 'BEAR'
-        else:
-            result['state'] = 'SIDEWAYS'
+        _above_vwap = _last > _vwap
+        if   _chg >= 0.5 and _above_vwap:      result['state'] = 'BULL'
+        elif _chg <= -0.5 and not _above_vwap:  result['state'] = 'BEAR'
+        elif _chg >= 0.5:   result['state'] = 'BULL'
+        elif _chg <= -0.5:  result['state'] = 'BEAR'
+        elif _chg >= 0.2:   result['state'] = 'BULL'
+        elif _chg <= -0.2:  result['state'] = 'BEAR'
+        else:               result['state'] = 'SIDEWAYS'
 
     except Exception:
         pass
@@ -4793,8 +4548,8 @@ if _show_scanner:
         grade, badge_cls = conf_label(conf)
         sig_val   = result['signal_val']
         chg       = result['change_pct']
-    chg_color = "#16a34a" if chg >= 0 else "#dc2626"
-    sym_clean = sym.replace('.NS', '')
+        chg_color = "#16a34a" if chg >= 0 else "#dc2626"
+        sym_clean = sym.replace('.NS', '')
 
     # ── Per-stock warmup warning ──────────────────────────
     _r_warmup  = result.get('warmup', 'READY')
@@ -4855,6 +4610,7 @@ if _show_scanner:
         if tp:
             port        = load_portfolio()
             _today_str  = ist_now().strftime('%d %b %Y')
+            _block_buy  = False   # default — overridden by re-entry checks below
 
             # Check 1 — Already have OPEN position in this stock
             _open_pos   = [p for p in port
@@ -4891,6 +4647,7 @@ if _show_scanner:
                     f"P&L <b style='color:{_op_pl_clr}'>"
                     f"{'+' if _op_pl>=0 else ''}₹{_op_pl:,.0f}</b></div>"
                     f"</div>", unsafe_allow_html=True)
+                _block_buy = False   # allow adding — just informing
 
             elif _sl_hit_today:
                 _sl_trade  = _sl_hit_today[0]
