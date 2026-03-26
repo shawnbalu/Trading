@@ -587,14 +587,178 @@ IST = pytz.timezone("Asia/Kolkata")
 def ist_now():
     return datetime.now(IST)
 
-def market_open():
-    """True if current IST time is within 9:15–15:30 on a weekday."""
+
+# ── NSE Holiday Calendar ───────────────────────────────
+# Primary source: pandas_market_calendars (accurate, auto-updated)
+# Fallback: hardcoded list (used if library not installed)
+def get_nse_holidays() -> dict:
+    """
+    Fetch NSE trading holidays directly from NSE's official API.
+    Returns dict: {'YYYY-MM-DD': 'Holiday Name', ...}
+
+    NSE endpoint returns JSON with tradingHolidays list for current year.
+    Cached in st.session_state for the day — only fetches once per session.
+    Falls back to pandas_market_calendars if NSE API fails.
+    Falls back to empty dict if both fail (app still works, just no holiday detection).
+    """
+    _cache_key = f"nse_holidays_{ist_now().strftime('%Y')}"
+
+    # Return cached result if already fetched this session
+    if _cache_key in st.session_state:
+        return st.session_state[_cache_key]
+
+    _holidays = {}
+
+    # ── Method 1: NSE official API ────────────────────────
+    try:
+        import requests
+        _year = ist_now().year
+        # NSE API — market holidays endpoint
+        _headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            'Accept': 'application/json',
+            'Referer': 'https://www.nseindia.com/',
+        }
+        # First hit NSE homepage to get session cookies
+        _session = requests.Session()
+        _session.get('https://www.nseindia.com', headers=_headers, timeout=10)
+
+        # Now fetch holiday list
+        _url = f'https://www.nseindia.com/api/holiday-master?type=trading'
+        _resp = _session.get(_url, headers=_headers, timeout=10)
+
+        if _resp.status_code == 200:
+            _data = _resp.json()
+            # NSE returns: {"CM": [...], "FO": [...], ...}
+            # CM = Capital Markets (equity) holidays
+            _cm_holidays = _data.get('CM', [])
+            for _h in _cm_holidays:
+                # Each entry: {"tradingDate": "26-Mar-2026", "weekDay": "Thursday",
+                #              "description": "Shri Ram Navami", "Sr_no": "4"}
+                _raw_date = _h.get('tradingDate', '')
+                _desc     = _h.get('description', 'Holiday')
+                try:
+                    from datetime import datetime as _dt
+                    _parsed = _dt.strptime(_raw_date, '%d-%b-%Y')
+                    _date_str = _parsed.strftime('%Y-%m-%d')
+                    _holidays[_date_str] = _desc
+                except Exception:
+                    pass
+
+    except Exception:
+        pass
+
+    # ── Method 2: pandas_market_calendars (if NSE API failed) ─
+    if not _holidays:
+        try:
+            import pandas_market_calendars as mcal
+            import pandas as pd
+            _nse       = mcal.get_calendar('NSE')
+            _start     = f'{ist_now().year}-01-01'
+            _end       = f'{ist_now().year + 1}-12-31'
+            _all_bdays = pd.bdate_range(_start, _end)
+            _sched     = _nse.schedule(start_date=_start, end_date=_end)
+            _open_days = pd.DatetimeIndex(_sched.index)
+            _hol_dates = _all_bdays.difference(_open_days)
+            for _d in _hol_dates:
+                _holidays[_d.strftime('%Y-%m-%d')] = 'NSE Holiday'
+        except Exception:
+            pass
+
+    # Cache result for this session
+    st.session_state[_cache_key] = _holidays
+    return _holidays
+
+
+def is_nse_holiday(date_str: str = None) -> tuple:
+    """
+    Returns (is_holiday: bool, holiday_name: str).
+    date_str format: 'YYYY-MM-DD'. Defaults to today IST.
+    """
+    if date_str is None:
+        date_str = ist_now().strftime('%Y-%m-%d')
+    _holidays = get_nse_holidays()
+    _name     = _holidays.get(date_str)
+    return (_name is not None), (_name or '')
+
+
+def market_open() -> bool:
+    """True if NSE is currently open — weekday, not a holiday, 9:15–15:30 IST."""
     now = ist_now()
     if now.weekday() >= 5:
+        return False
+    _is_hol, _ = is_nse_holiday(now.strftime('%Y-%m-%d'))
+    if _is_hol:
         return False
     t = now.time()
     from datetime import time as _t
     return _t(9, 15) <= t <= _t(15, 30)
+
+
+
+def detect_expiry(now=None):
+    """
+    Detect if today is an NSE options expiry day.
+    Returns dict with expiry type, rules, and trading guidance.
+    Nifty weekly  = every Thursday
+    Bank Nifty    = every Wednesday
+    Monthly       = last Thursday of month
+    """
+    from calendar import monthcalendar
+    if now is None:
+        now = ist_now()
+    _wd = now.weekday()   # 0=Mon … 6=Sun
+    _d  = now.day
+    _m  = now.month
+    _y  = now.year
+
+    _nifty_exp  = (_wd == 3)   # Thursday
+    _bnifty_exp = (_wd == 2)   # Wednesday
+    _is_monthly = False
+
+    if _nifty_exp:
+        _cal   = monthcalendar(_y, _m)
+        _thurs = [w[3] for w in _cal if w[3] != 0]
+        _is_monthly = (_d == _thurs[-1])
+
+    if _nifty_exp:
+        _exp_type = 'NIFTY_MONTHLY' if _is_monthly else 'NIFTY_WEEKLY'
+    elif _bnifty_exp:
+        _exp_type = 'BANKNIFTY_WEEKLY'
+    else:
+        _exp_type = None
+
+    _is_expiry = _exp_type is not None
+
+    if not _is_expiry:
+        return {
+            'is_expiry': False, 'expiry_type': None,
+            'is_monthly': False, 'expiry_label': '',
+            'best_entry_time': '9:35 AM – 2:30 PM',
+            'exit_time': '3:15 PM',
+            'min_candles_confirm': 1,
+            'gap_fill_prob': 30,
+            'target_multiplier': 1.5,
+        }
+
+    _label = {
+        'NIFTY_WEEKLY':    '📅 Nifty Weekly Expiry (Thursday)',
+        'NIFTY_MONTHLY':   '📅 Nifty MONTHLY Expiry (Last Thursday) — Most Volatile',
+        'BANKNIFTY_WEEKLY':'📅 Bank Nifty Weekly Expiry (Wednesday)',
+    }.get(_exp_type, '📅 Expiry Day')
+
+    return {
+        'is_expiry':           _is_expiry,
+        'expiry_type':         _exp_type,
+        'is_monthly':          _is_monthly,
+        'expiry_label':        _label,
+        'best_entry_time':     '10:00 AM – 10:30 AM  or  1:30 PM – 2:30 PM',
+        'exit_time':           '2:30 PM',
+        'min_candles_confirm': 3,
+        'gap_fill_prob':       65,
+        'target_multiplier':   0.5,
+    }
+
 
 def load_portfolio() -> list:
     try:
@@ -1022,37 +1186,126 @@ POPULAR_STOCKS = sorted(list(set([
 # Prevents re-fetching the same stock if user re-runs with same settings
 _DATA_CACHE: dict = {}
 
+# ── Early Mover Universe — 100 stocks ─────────────────────
+# Used ONLY by the Early Movers page.
+# Criteria for inclusion:
+#   1. Nifty 50 constituents (large cap, always liquid)
+#   2. High-beta stocks that move first on gap-up days
+#   3. High-volume intraday favorites (retail + institutional)
+#   4. Sector leaders for each of the 20 sectors
+# Why 100? At 1min data fetch = ~30-40 seconds total scan time.
+# 498 stocks = 90+ seconds — move already done by then.
+EARLY_MOVER_STOCKS = sorted(set([
+    # ── Nifty 50 core (large cap, always move with market) ─
+    "ADANIENT.NS","ADANIPORTS.NS","APOLLOHOSP.NS","ASIANPAINT.NS","AXISBANK.NS",
+    "BAJAJ-AUTO.NS","BAJAJFINSV.NS","BAJFINANCE.NS","BHARTIARTL.NS","BPCL.NS",
+    "BRITANNIA.NS","CIPLA.NS","COALINDIA.NS","DIVISLAB.NS","DRREDDY.NS",
+    "EICHERMOT.NS","HCLTECH.NS","HDFCBANK.NS","HDFCLIFE.NS","HEROMOTOCO.NS",
+    "HINDALCO.NS","HINDUNILVR.NS","ICICIBANK.NS","INDUSINDBK.NS","INFY.NS",
+    "ITC.NS","JSWSTEEL.NS","KOTAKBANK.NS","LT.NS","M&M.NS",
+    "MARUTI.NS","NESTLEIND.NS","NTPC.NS","ONGC.NS","POWERGRID.NS",
+    "RELIANCE.NS","SBIN.NS","SHRIRAMFIN.NS","SUNPHARMA.NS","TATACONSUM.NS",
+    "TATASTEEL.NS","TCS.NS","TECHM.NS","TITAN.NS","TRENT.NS",
+    "ULTRACEMCO.NS","WIPRO.NS","GRASIM.NS","BAJAJHLDNG.NS","TATAMOTORS.NS",
+
+    # ── High beta — move first and hardest on gap days ─────
+    "ADANIGREEN.NS","ADANIPOWER.NS","WAAREEENER.NS","SUZLON.NS","TATAPOWER.NS",
+    "IRFC.NS","RVNL.NS","NHPC.NS","BEL.NS","HAL.NS",
+    "RECLTD.NS","PFC.NS","HUDCO.NS","SJVN.NS","NTPCGREEN.NS",
+    "DIXON.NS","LTTS.NS","PERSISTENT.NS","COFORGE.NS","KPITTECH.NS",
+
+    # ── Intraday high-volume favorites ─────────────────────
+    "YESBANK.NS","IDEA.NS","RPOWER.NS","JPPOWER.NS","IREDA.NS",
+    "ANGELONE.NS","MOTILALOFS.NS","BSE.NS","MCX.NS","CDSL.NS",
+
+    # ── Sector leaders (one per sector, high volume) ───────
+    "HDFCAMC.NS","MUTHOOTFIN.NS","ICICIPRULI.NS","MPHASIS.NS","TVSMOTOR.NS",
+    "DLF.NS","GODREJPROP.NS","ANANTRAJ.NS","AMBUJACEM.NS","PIDILITIND.NS",
+    "HAVELLS.NS","POLYCAB.NS","TATACHEM.NS","VOLTAS.NS","LODHA.NS",
+    "PRESTIGE.NS","ABBOTINDIA.NS","ETERNAL.NS","SWIGGY.NS","KAYNES.NS","CHOLAFIN.NS",
+]))
+
+# ── Priority scan stocks — scanned FIRST for faster signals ──
+# These 60 stocks are highest volume, most liquid, move first.
+# Scanning them first shows results in ~20s instead of 90s.
+PRIORITY_STOCKS = sorted(set([
+    # Nifty 50 heavyweights
+    "RELIANCE.NS","HDFCBANK.NS","ICICIBANK.NS","INFY.NS","TCS.NS",
+    "SBIN.NS","AXISBANK.NS","KOTAKBANK.NS","LT.NS","BAJFINANCE.NS",
+    "HCLTECH.NS","WIPRO.NS","TECHM.NS","BHARTIARTL.NS","NTPC.NS",
+    "POWERGRID.NS","ONGC.NS","MARUTI.NS","M&M.NS","TATASTEEL.NS",
+    "JSWSTEEL.NS","HINDALCO.NS","COALINDIA.NS","BAJAJ-AUTO.NS","TITAN.NS",
+    # High beta / first movers
+    "ADANIPOWER.NS","ADANIGREEN.NS","TATAPOWER.NS","SUZLON.NS","RVNL.NS",
+    "WAAREEENER.NS","IRFC.NS","RECLTD.NS","PFC.NS","HAL.NS",
+    "BEL.NS","NHPC.NS","SJVN.NS","IREDA.NS","NTPCGREEN.NS",
+    # High volume intraday
+    "YESBANK.NS","IDEA.NS","RPOWER.NS","JPPOWER.NS","INDUSINDBK.NS",
+    "ICICIPRULI.NS","HDFCLIFE.NS","SBILIFE.NS","BAJAJFINSV.NS","SHRIRAMFIN.NS",
+    # Sector leaders that move with market
+    "LTTS.NS","PERSISTENT.NS","COFORGE.NS","MPHASIS.NS","KPITTECH.NS",
+    "SUNPHARMA.NS","DRREDDY.NS","CIPLA.NS","DLF.NS","GODREJPROP.NS",
+]))
+
 # ── Sector map ────────────────────────────────────────────
 SECTOR_MAP = {
-    # ── Banking ───────────────────────────────────────────
+    # ── Banking (PSU + Private) ───────────────────────────
     'HDFCBANK':'BANKING','ICICIBANK':'BANKING','SBIN':'BANKING','AXISBANK':'BANKING',
     'KOTAKBANK':'BANKING','BANDHANBNK':'BANKING','IDFCFIRSTB':'BANKING','INDUSINDBK':'BANKING',
     'FEDERALBNK':'BANKING','CANBK':'BANKING','PNB':'BANKING','BANKBARODA':'BANKING',
-    'AUBANK':'BANKING','RBLBANK':'BANKING','KARURVYSYA':'BANKING','CSBBANK':'BANKING',
-    'DCBBANK':'BANKING','UJJIVANSFB':'BANKING','EQUITASBNK':'BANKING',
+    'AUBANK':'BANKING','RBLBANK':'BANKING','KARURVYSYA':'BANKING','CENTRALBK':'BANKING',
+    'INDIANB':'BANKING','MAHABANK':'BANKING','UCOBANK':'BANKING','UNIONBANK':'BANKING',
+    'BANKINDIA':'BANKING','IOB':'BANKING','IDBI':'BANKING','J&KBANK':'BANKING',
+    'CUB':'BANKING','YESBANK':'BANKING','VIJAYA':'BANKING','IFCI':'BANKING',
 
     # ── NBFC ──────────────────────────────────────────────
     'BAJFINANCE':'NBFC','BAJAJFINSV':'NBFC','CHOLAFIN':'NBFC','MUTHOOTFIN':'NBFC',
     'IIFL':'NBFC','M&MFIN':'NBFC','APTUS':'NBFC','CREDITACC':'NBFC',
     'MANAPPURAM':'NBFC','SHRIRAMFIN':'NBFC','LICHSGFIN':'NBFC','PNBHOUSING':'NBFC',
     'CANFINHOME':'NBFC','HOMEFIRST':'NBFC','AAVAS':'NBFC','ABCAPITAL':'NBFC',
+    'CHOLAHLDNG':'NBFC','BAJAJHFL':'NBFC','SBFC':'NBFC','FIVESTAR':'NBFC',
+    'AADHARHFC':'NBFC','POONAWALLA':'NBFC','JIOFIN':'NBFC','JMFINANCIL':'NBFC',
+    'SUNDARMFIN':'NBFC','360ONE':'NBFC','ANANDRATHI':'NBFC','MOTILALOFS':'NBFC',
+    'NUVAMA':'NBFC','ANGELONE':'NBFC','CHOICEIN':'NBFC','LTF':'NBFC',
+    'CGCL':'NBFC',
 
     # ── Insurance ─────────────────────────────────────────
     'HDFCLIFE':'INSURANCE','SBILIFE':'INSURANCE','ICICIGI':'INSURANCE',
     'ICICIPRULI':'INSURANCE','STARHEALTH':'INSURANCE','NIACL':'INSURANCE',
-    'GICRE':'INSURANCE','LICI':'INSURANCE',
+    'GICRE':'INSURANCE','LICI':'INSURANCE','GODIGIT':'INSURANCE',
+    'NIVABUPA':'INSURANCE','POLICYBZR':'INSURANCE','MFSL':'INSURANCE',
 
-    # ── IT ────────────────────────────────────────────────
+    # ── Capital Markets / Exchanges ───────────────────────
+    'BSE':'CAPITAL_MARKETS','MCX':'CAPITAL_MARKETS','CDSL':'CAPITAL_MARKETS',
+    'CAMS':'CAPITAL_MARKETS','KFINTECH':'CAPITAL_MARKETS','IEX':'CAPITAL_MARKETS',
+    'CRISIL':'CAPITAL_MARKETS','HDFCAMC':'CAPITAL_MARKETS','ABSLAMC':'CAPITAL_MARKETS',
+    'UTIAMC':'CAPITAL_MARKETS','NAM-INDIA':'CAPITAL_MARKETS',
+
+    # ── IT & Software ─────────────────────────────────────
     'TCS':'IT','INFY':'IT','WIPRO':'IT','HCLTECH':'IT','TECHM':'IT',
-    'LTTS':'IT','LTIM':'IT','MPHASIS':'IT','COFORGE':'IT','PERSISTENT':'IT',
+    'LTTS':'IT','MPHASIS':'IT','COFORGE':'IT','PERSISTENT':'IT',
     'OFSS':'IT','KPITTECH':'IT','TATAELXSI':'IT','CYIENT':'IT',
-    'BSOFT':'IT','MASTEK':'IT','SONATSOFTW':'IT','MINDTREE':'IT',
+    'BSOFT':'IT','SONATSOFTW':'IT','ZENSARTECH':'IT','NEWGEN':'IT',
+    'INTELLECT':'IT','LATENTVIEW':'IT','ECLERX':'IT','MAPMYINDIA':'IT',
+    'INDIAMART':'IT','NAUKRI':'IT','HAPPSTMNDS':'IT','NETWEB':'IT',
+    'SYRMA':'IT','KAYNES':'IT','SAGILITY':'IT','TATATECH':'IT',
+    'AFFLE':'IT','FIRSTCRY':'IT','PAYTM':'IT','ETERNAL':'IT',
+    'SWIGGY':'IT','ONESOURCE':'IT','IKS':'IT','REDINGTON':'IT',
 
-    # ── Auto ──────────────────────────────────────────────
+    # ── Telecom ───────────────────────────────────────────
+    'BHARTIARTL':'TELECOM','IDEA':'TELECOM','TATACOMM':'TELECOM','HFCL':'TELECOM',
+    'BHARTIHEXA':'TELECOM','INDUSTOWER':'TELECOM','TEJASNET':'TELECOM','TTML':'TELECOM',
+
+    # ── Auto & Auto Ancillary ─────────────────────────────
     'MARUTI':'AUTO','TATAMOTORS':'AUTO','M&M':'AUTO','BAJAJ-AUTO':'AUTO',
-    'HEROMOTOCO':'AUTO','EICHERMOT':'AUTO','TVSMOTORS':'AUTO','ASHOKLEY':'AUTO',
-    'TVSMOTOR':'AUTO','ESCORTS':'AUTO','MOTHERSON':'AUTO','BHARATFORG':'AUTO',
-    'BOSCHLTD':'AUTO','TIINDIA':'AUTO','ENDURANCE':'AUTO','SONACOMS':'AUTO',
+    'HEROMOTOCO':'AUTO','EICHERMOT':'AUTO','TVSMOTOR':'AUTO','ASHOKLEY':'AUTO',
+    'ESCORTS':'AUTO','MOTHERSON':'AUTO','BHARATFORG':'AUTO','BOSCHLTD':'AUTO',
+    'TIINDIA':'AUTO','ENDURANCE':'AUTO','SONACOMS':'AUTO','APOLLOTYRE':'AUTO',
+    'CEATLTD':'AUTO','BALKRISIND':'AUTO','MRF':'AUTO','EXIDEIND':'AUTO',
+    'UNOMINDA':'AUTO','MINDACORP':'AUTO','MAHSCOOTER':'AUTO','FORCEMOT':'AUTO',
+    'SUNDRMFAST':'AUTO','SCHAEFFLER':'AUTO','TIMKEN':'AUTO','JKTYRE':'AUTO',
+    'RKFORGE':'AUTO','CRAFTSMAN':'AUTO','ASAHIINDIA':'AUTO','MSUMI':'AUTO',
+    'HYUNDAI':'AUTO','TMPV':'AUTO',
 
     # ── Pharma & Healthcare ───────────────────────────────
     'SUNPHARMA':'PHARMA','DRREDDY':'PHARMA','CIPLA':'PHARMA','DIVISLAB':'PHARMA',
@@ -1060,84 +1313,177 @@ SECTOR_MAP = {
     'IPCALAB':'PHARMA','GRANULES':'PHARMA','GLENMARK':'PHARMA','NATCOPHARM':'PHARMA',
     'ABBOTINDIA':'PHARMA','PFIZER':'PHARMA','GLAXO':'PHARMA','LAURUSLABS':'PHARMA',
     'APOLLOHOSP':'PHARMA','MAXHEALTH':'PHARMA','FORTIS':'PHARMA','METROPOLIS':'PHARMA',
+    'AJANTPHARM':'PHARMA','BIOCON':'PHARMA','LALPATHLAB':'PHARMA','RAINBOW':'PHARMA',
+    'SYNGENE':'PHARMA','ASTERDM':'PHARMA','MEDANTA':'PHARMA','KIMS':'PHARMA',
+    'NH':'PHARMA','MANKIND':'PHARMA','JBCHEPHARM':'PHARMA','CAPLIPOINT':'PHARMA',
+    'NEULANDLAB':'PHARMA','ERIS':'PHARMA','CONCORDBIO':'PHARMA','EMCURE':'PHARMA',
+    'GLAND':'PHARMA','ZYDUSLIFE':'PHARMA','WOCKPHARMA':'PHARMA','PPLPHARMA':'PHARMA',
+    'AKUMS':'PHARMA','POLYMED':'PHARMA','AGARWALEYE':'PHARMA',
 
     # ── Energy & Oil ──────────────────────────────────────
     'RELIANCE':'ENERGY','ONGC':'ENERGY','BPCL':'ENERGY','IOC':'ENERGY',
     'NTPC':'ENERGY','POWERGRID':'ENERGY','ADANIPOWER':'ENERGY','TATAPOWER':'ENERGY',
     'GAIL':'ENERGY','PETRONET':'ENERGY','GUJGASLTD':'ENERGY','MGL':'ENERGY',
     'IGL':'ENERGY','ATGL':'ENERGY','TORNTPOWER':'ENERGY','CESC':'ENERGY',
+    'HINDPETRO':'ENERGY','OIL':'ENERGY','MRPL':'ENERGY','CHENNPETRO':'ENERGY',
+    'GSPL':'ENERGY','GSPL':'ENERGY','FACT':'ENERGY','DEEPAKFERT':'ENERGY',
+    'CHAMBLFERT':'ENERGY','RCF':'ENERGY','COROMANDEL':'ENERGY',
 
-    # ── Solar/Renewables ──────────────────────────────────
+    # ── Solar / Renewables ────────────────────────────────
     'WAAREEENER':'SOLAR','PREMIERENE':'SOLAR','SUZLON':'SOLAR','ADANIGREEN':'SOLAR',
-    'NHPC':'SOLAR','SJVN':'SOLAR','INOXWIND':'SOLAR','WEBSOL':'SOLAR',
+    'NHPC':'SOLAR','SJVN':'SOLAR','INOXWIND':'SOLAR','NTPCGREEN':'SOLAR',
+    'ACMESOLAR':'SOLAR','ADANIENSOL':'SOLAR','ATHERENERG':'SOLAR',
+    'OLECTRA':'SOLAR','OLAELEC':'SOLAR','JSWENERGY':'SOLAR',
 
     # ── Metals & Mining ───────────────────────────────────
     'TATASTEEL':'METALS','JSWSTEEL':'METALS','HINDALCO':'METALS','SAIL':'METALS',
     'VEDL':'METALS','NATIONALUM':'METALS','NMDC':'METALS','COALINDIA':'METALS',
-    'HINDCOPPER':'METALS','MOIL':'METALS','WELCORP':'METALS','RATNAMANI':'METALS',
+    'HINDCOPPER':'METALS','WELCORP':'METALS','JINDALSAW':'METALS','JINDALSTEL':'METALS',
+    'JSL':'METALS','NSLNISP':'METALS','GPIL':'METALS','SHYAMMETL':'METALS',
+    'GRAVITA':'METALS','HEG':'METALS','GRAPHITE':'METALS','NAVA':'METALS',
+    'GMDCLTD':'METALS','HINDZINC':'METALS','MOIL':'METALS','MMTC':'METALS',
 
-    # ── FMCG ──────────────────────────────────────────────
+    # ── Capital Goods / Infra / Defence ───────────────────
+    'LT':'INFRA','SIEMENS':'INFRA','ABB':'INFRA','BHEL':'INFRA',
+    'THERMAX':'INFRA','CUMMINSIND':'INFRA','GRSE':'INFRA','BEL':'INFRA',
+    'HAL':'INFRA','COCHINSHIP':'INFRA','RVNL':'INFRA','IRFC':'INFRA',
+    'RAILTEL':'INFRA','IRCTC':'INFRA','BDL':'INFRA','BEML':'INFRA',
+    'MAZDOCK':'INFRA','DATAPATTNS':'INFRA','KEC':'INFRA','KPIL':'INFRA',
+    'NCC':'INFRA','NBCC':'INFRA','IRB':'INFRA','ENGINERSIN':'INFRA',
+    'RITES':'INFRA','IRCON':'INFRA','IREDA':'INFRA','HUDCO':'INFRA',
+    'RECLTD':'INFRA','PFC':'INFRA','JSWINFRA':'INFRA','AFCONS':'INFRA',
+    'TRITURBINE':'INFRA','ELECON':'INFRA','ELGIEQUIP':'INFRA','KIRLOSBROS':'INFRA',
+    'KIRLOSENG':'INFRA','KSB':'INFRA','TITAGARH':'INFRA','GMRAIRPORT':'INFRA',
+    'AIAENG':'INFRA','ACE':'INFRA','JBMA':'INFRA','POWERINDIA':'INFRA',
+    'GVT&D':'INFRA','HBLENGINE':'INFRA','ARE&M':'INFRA','SCI':'INFRA',
+    'GESHIP':'INFRA','CONCOR':'INFRA',
+
+    # ── FMCG & Consumer Staples ───────────────────────────
     'HINDUNILVR':'FMCG','ITC':'FMCG','NESTLEIND':'FMCG','BRITANNIA':'FMCG',
     'DABUR':'FMCG','MARICO':'FMCG','TATACONSUM':'FMCG','GODREJCP':'FMCG',
     'COLPAL':'FMCG','EMAMILTD':'FMCG','VBL':'FMCG','RADICO':'FMCG',
-    'MCDOWELL-N':'FMCG','UNITDSPR':'FMCG',
+    'UNITDSPR':'FMCG','BIKAJI':'FMCG','JYOTHYLAB':'FMCG','PATANJALI':'FMCG',
+    'GODFRYPHLP':'FMCG','GILLETTE':'FMCG','PGHH':'FMCG','AWL':'FMCG',
+    'HONASA':'FMCG','DOMS':'FMCG','BALRAMCHIN':'FMCG','TRIVENI':'FMCG',
 
     # ── Real Estate ───────────────────────────────────────
     'DLF':'REALTY','GODREJPROP':'REALTY','PRESTIGE':'REALTY','OBEROIRLTY':'REALTY',
     'BRIGADE':'REALTY','SOBHA':'REALTY','PHOENIXLTD':'REALTY','ANANTRAJ':'REALTY',
-    'MAHLIFE':'REALTY','KOLTEPATIL':'REALTY','PURVA':'REALTY','SUNTECK':'REALTY',
-    'LODHA':'REALTY','SIGNATURE':'REALTY','DBREALTY':'REALTY','IBREALEST':'REALTY',
+    'LODHA':'REALTY','SIGNATURE':'REALTY','DBREALTY':'REALTY','CHALET':'REALTY',
+    'VENTIVE':'REALTY','JUBLINGREA':'REALTY',
 
     # ── Cement ────────────────────────────────────────────
     'ULTRACEMCO':'CEMENT','AMBUJACEM':'CEMENT','ACC':'CEMENT','SHREECEM':'CEMENT',
-    'DALBHARAT':'CEMENT','RAMCOCEM':'CEMENT','JKCEMENT':'CEMENT','HEIDELBERG':'CEMENT',
-    'NUVOCO':'CEMENT','BIRLACORPN':'CEMENT',
+    'DALBHARAT':'CEMENT','RAMCOCEM':'CEMENT','JKCEMENT':'CEMENT','NUVOCO':'CEMENT',
+    'INDIACEM':'CEMENT','JSWCEMENT':'CEMENT',
 
-    # ── Chemicals ─────────────────────────────────────────
-    'PIDILITIND':'CHEMICALS','ASIANPAINT':'CHEMICALS','BERGERPAINTS':'CHEMICALS',
+    # ── Chemicals & Specialty ─────────────────────────────
+    'PIDILITIND':'CHEMICALS','ASIANPAINT':'CHEMICALS','BERGEPAINT':'CHEMICALS',
     'AARTIIND':'CHEMICALS','DEEPAKNTR':'CHEMICALS','NAVINFLUOR':'CHEMICALS',
-    'FINEORG':'CHEMICALS','GALAXYSURF':'CHEMICALS','CLEAN':'CHEMICALS',
-    'TATACHEM':'CHEMICALS','GNFC':'CHEMICALS','GUJFLUORO':'CHEMICALS',
+    'CLEAN':'CHEMICALS','TATACHEM':'CHEMICALS','SRF':'CHEMICALS',
+    'ATUL':'CHEMICALS','ALKYLAMINE':'CHEMICALS','FLUOROCHEM':'CHEMICALS',
+    'PCBL':'CHEMICALS','SUMICHEM':'CHEMICALS','PIIND':'CHEMICALS',
+    'DCMSHRIRAM':'CHEMICALS','GODREJAGRO':'CHEMICALS','BASF':'CHEMICALS',
+    'BAYERCROP':'CHEMICALS','UPL':'CHEMICALS','CASTROLIND':'CHEMICALS',
+    'AKZOINDIA':'CHEMICALS','LINDEINDIA':'CHEMICALS','RHIM':'CHEMICALS',
+    'CARBORUNIV':'CHEMICALS','PRAJIND':'CHEMICALS','HSCL':'CHEMICALS',
 
-    # ── Consumer Durables ─────────────────────────────────
-    'HAVELLS':'CONSUMER','VOLTAS':'CONSUMER','BLUESTAR':'CONSUMER','WHIRLPOOL':'CONSUMER',
-    'CROMPTON':'CONSUMER','ORIENTELEC':'CONSUMER','DIXON':'CONSUMER','AMBER':'CONSUMER',
-    'BATAINDIA':'CONSUMER','VGUARD':'CONSUMER','POLYCAB':'CONSUMER','KEI':'CONSUMER',
+    # ── Consumer Durables & Electronics ───────────────────
+    'HAVELLS':'CONSUMER','VOLTAS':'CONSUMER','WHIRLPOOL':'CONSUMER',
+    'CROMPTON':'CONSUMER','DIXON':'CONSUMER','AMBER':'CONSUMER',
+    'BATAINDIA':'CONSUMER','VGUARD':'CONSUMER','POLYCAB':'CONSUMER',
+    'KEI':'CONSUMER','RRKABEL':'CONSUMER','FINCABLES':'CONSUMER',
+    'BLUESTARCO':'CONSUMER','LLOYDSME':'CONSUMER','CGPOWER':'CONSUMER',
+    'SOLARINDS':'CONSUMER','USHAMART':'CONSUMER','CERA':'CONSUMER',
+    'KAJARIACER':'CONSUMER','CENTURYPLY':'CONSUMER','ASTRAL':'CONSUMER',
+    'APLAPOLLO':'CONSUMER','FINPIPE':'CONSUMER','SUPREMEIND':'CONSUMER',
+    'TRIDENT':'CONSUMER','WELSPUNLIV':'CONSUMER','GRASIM':'CONSUMER',
+    'KPRMILL':'CONSUMER','TECHNOE':'CONSUMER','BLUEJET':'CONSUMER',
+    'APARINDS':'CONSUMER',
 
-    # ── Telecom ───────────────────────────────────────────
-    'BHARTIARTL':'TELECOM','IDEA':'TELECOM','TATACOMM':'TELECOM','HFCL':'TELECOM',
-
-    # ── Capital Goods / Infra ─────────────────────────────
-    'LT':'INFRA','SIEMENS':'INFRA','ABB':'INFRA','BHEL':'INFRA',
-    'THERMAX':'INFRA','CUMMINSIND':'INFRA','GRSE':'INFRA','BEL':'INFRA',
-    'HAL':'INFRA','COCHINSHIP':'INFRA','MAZAGON':'INFRA','RVNL':'INFRA',
-    'IRFC':'INFRA','RAILTEL':'INFRA','IRCTC':'INFRA',
-
-    # ── Defence ───────────────────────────────────────────
-    'SWANDEF':'DEFENCE','DATAPATTNS':'DEFENCE','PARAS':'DEFENCE',
-    'MAZDOCK':'DEFENCE','ASTRAZEN':'DEFENCE',
-
-    # ── Retail / Consumer Services ────────────────────────
+    # ── Retail & Consumer Services ────────────────────────
     'DMART':'RETAIL','TRENT':'RETAIL','NYKAA':'RETAIL','DEVYANI':'RETAIL',
-    'JUBLFOOD':'RETAIL','WESTLIFE':'RETAIL','SAPPHIRE':'RETAIL','CAMPUS':'RETAIL',
+    'JUBLFOOD':'RETAIL','SAPPHIRE':'RETAIL','CAMPUS':'RETAIL',
+    'KALYANKJIL':'RETAIL','MANYAVAR':'RETAIL','TITAN':'RETAIL',
+    'PAGEIND':'RETAIL','BBTC':'RETAIL','HONAUT':'RETAIL',
+    'THELEELA':'RETAIL','LEMONTREE':'RETAIL',
+    'INDHOTEL':'RETAIL','EIHOTEL':'RETAIL',
 
     # ── Media & Entertainment ─────────────────────────────
-    'ZEEL':'MEDIA','SUNTV':'MEDIA','PVRINOX':'MEDIA','NETWORK18':'MEDIA',
+    'ZEEL':'MEDIA','SUNTV':'MEDIA','PVRINOX':'MEDIA','SAREGAMA':'MEDIA',
+    'NAZARA':'MEDIA','NETWORK18':'MEDIA',
 
-    # ── Logistics ────────────────────────────────────────
-    'DELHIVERY':'LOGISTICS','VRL':'LOGISTICS','MAHINDCIE':'LOGISTICS',
-    'BLUEDART':'LOGISTICS','GATI':'LOGISTICS',
+    # ── Logistics & Shipping ──────────────────────────────
+    'DELHIVERY':'LOGISTICS','BLUEDART':'LOGISTICS','CONCOR':'LOGISTICS',
+    'AEGISLOG':'LOGISTICS','AEGISVOPAK':'LOGISTICS',
+
+    # ── Aviation ─────────────────────────────────────────
+    'INDIGO':'AVIATION',
+
+    # ── Miscellaneous / Conglomerate ─────────────────────
+    'GODREJIND':'CONGLOMERATE','TATAINVEST':'CONGLOMERATE',
+    'BAJAJHLDNG':'CONGLOMERATE','3MINDIA':'CONGLOMERATE',
+    'ADANIENT':'CONGLOMERATE','ADANIPORTS':'INFRA',
+
+    # ── Remaining unmapped ────────────────────────────────
+    'ABFRL':'CONSUMER',        # Aditya Birla Fashion — retail/apparel
+    'ABLBL':'CONSUMER',        # Aditya Birla — consumer
+    'ABREL':'CONSUMER',        # Aditya Birla Real Estate
+    'AIIL':'INFRA',            # Authbridge / Infra
+    'ALOKINDS':'CHEMICALS',    # Alok Industries — textiles/chemicals
+    'APLLTD':'PHARMA',         # APL Apollo — steel tubes (INFRA)
+    'ASTRAZEN':'PHARMA',       # AstraZeneca Pharma
+    'BLS':'INFRA',             # BLS International — services
+    'CCL':'FMCG',              # CCL Products — coffee/FMCG
+    'COHANCE':'IT',            # Cohance Lifesciences
+    'EIDPARRY':'FMCG',         # EID Parry — sugar/FMCG
+    'ENRIN':'ENERGY',          # Energy / renewables
+    'FSL':'IT',                # Firstsource Solutions — IT/BPO
+    'HEXT':'IT',               # Hexaware Technologies — IT
+    'IGIL':'INFRA',            # IGIL Infra
+    'INDGN':'IT',              # Indegene — IT/healthcare
+    'INOXINDIA':'INFRA',       # Inox India — industrial gases
+    'ITCHOTELS':'RETAIL',      # ITC Hotels — hospitality
+    'ITI':'INFRA',             # ITI Limited — telecom/infra
+    'JPPOWER':'ENERGY',        # Jaiprakash Power — energy
+    'JUBLPHARMA':'PHARMA',     # Jubilant Pharmova — pharma
+    'JWL':'CONSUMER',          # Jupiter Wagons — consumer/infra
+    'JYOTICNC':'INFRA',        # Jyoti CNC — capital goods
+    'LTFOODS':'FMCG',          # LT Foods — rice/FMCG
+    'LTM':'INFRA',             # L&T Metro Rail
+    'MAHSEAMLES':'METALS',     # Maharastra Seamless — metals/pipes
+    'NLCINDIA':'ENERGY',       # NLC India — energy/coal
+    'PGEL':'ENERGY',           # PG Electroplast — energy
+    'PTCIL':'ENERGY',          # PTC India — power trading
+    'RELINFRA':'INFRA',        # Reliance Infra
+    'RPOWER':'ENERGY',         # Reliance Power
+    'SAILIFE':'PHARMA',        # Sai Life Sciences — pharma
+    'SAMMAANCAP':'NBFC',       # Sammaan Capital — NBFC
+    'SARDAEN':'ENERGY',        # Sarda Energy — energy/metals
+    'SBICARD':'NBFC',          # SBI Cards — NBFC/payments
+    'SCHNEIDER':'INFRA',       # Schneider Electric — capital goods
+    'SWANCORP':'CONSUMER',     # Swan Energy — consumer/textiles
+    'TARIL':'INFRA',           # TARIL — infra
+    'TBOTEK':'IT',             # TBO Tek — travel tech/IT
+    'UBL':'FMCG',              # United Breweries — FMCG
+    'VMM':'METALS',            # Vishnu Metallics — metals
+    'VTL':'INFRA',             # Vardhman Textiles — consumer
+    'ZENTEC':'IT',             # Zen Technologies — IT/defence
+    'ZFCVINDIA':'AUTO',        # ZF Commercial Vehicle — auto
 }
 
 def get_nifty_market_state(kite=None):
     """
-    Fetch Nifty 50 + India VIX Index (raw value).
-    VIX thresholds calibrated for Indian market:
-      < 12  -> CALM      (very rare, ideal)
-      12-15 -> NORMAL    (best trading conditions)
-      15-20 -> ELEVATED  (slight caution)
-      20-25 -> HIGH      (reduce position size)
-      > 25  -> EXTREME   (avoid intraday)
+    Fetch Nifty 50 + India VIX Index.
+    VIX thresholds calibrated for INDIA (not US):
+      India VIX is structurally higher than US VIX.
+      VIX 16-20 = completely normal for India.
+      < 13  -> CALM     (very rare — perfect conditions)
+      13-16 -> NORMAL   (best trading conditions)
+      16-20 -> ELEVATED (normal India range — trade freely)
+      20-25 -> HIGH     (expiry/event day — reduce size 30%)
+      25-30 -> EXTREME  (real fear — only strongest signals)
+      > 30  -> CRISIS   (COVID/war level — avoid intraday)
     """
     result = {
         'state':      'UNKNOWN',
@@ -1223,19 +1569,25 @@ def get_nifty_market_state(kite=None):
         result['nifty_vwap'] = round(_vwap, 2)
         result['ema_trend']  = 'BULL' if _ema9 > _ema21 else 'BEAR'
 
-        # ── VIX classification ────────────────────────────
+        # ── VIX classification — India-calibrated ────────
+        # India VIX is structurally higher than US VIX.
+        # VIX 16-20 = completely normal for India.
+        # VIX 20-25 = slightly elevated (Budget/expiry days).
+        # VIX > 30  = true crisis (COVID/war level).
         if _vix_val is not None:
             result['vix'] = round(_vix_val, 2)
-            if _vix_val < 12:
-                result['vix_level'] = 'CALM'
-            elif _vix_val < 15:
-                result['vix_level'] = 'NORMAL'
+            if _vix_val < 13:
+                result['vix_level'] = 'CALM'      # very rare — perfect conditions
+            elif _vix_val < 16:
+                result['vix_level'] = 'NORMAL'    # best conditions
             elif _vix_val < 20:
-                result['vix_level'] = 'ELEVATED'
+                result['vix_level'] = 'ELEVATED'  # normal India range — trade freely
             elif _vix_val < 25:
-                result['vix_level'] = 'HIGH'
+                result['vix_level'] = 'HIGH'      # expiry/event day — reduce size
+            elif _vix_val < 30:
+                result['vix_level'] = 'EXTREME'   # real fear — only strong signals
             else:
-                result['vix_level'] = 'EXTREME'
+                result['vix_level'] = 'CRISIS'    # COVID/war level — avoid intraday
 
         # ── Market state: price % is primary ─────────────
         _above_vwap = _last > _vwap
@@ -1391,7 +1743,17 @@ def fetch_multi_timeframe(symbol, kite=None):
     return _results
 
 def _cache_key(symbol, interval):
-    return f"{symbol}_{interval}_{datetime.now().strftime('%Y%m%d_%H')}"
+    # 1min/3min data: refresh every 5 minutes (stale data = missed signals)
+    # 5min/15min data: refresh every 15 minutes
+    # 60min data: refresh every hour
+    _now = datetime.now()
+    if interval in ('1minute', '3minute'):
+        _bucket = _now.strftime('%Y%m%d_%H') + str(_now.minute // 5)
+    elif interval in ('5minute', '15minute'):
+        _bucket = _now.strftime('%Y%m%d_%H') + str(_now.minute // 15)
+    else:
+        _bucket = _now.strftime('%Y%m%d_%H')
+    return f"{symbol}_{interval}_{_bucket}"
 
 def fetch_intraday(symbol, interval="1minute", period="1d", kite=None):
     """
@@ -2393,15 +2755,34 @@ def compute_intraday_pick_score(r):
     # ════════════════════════════════════════════
     total = max(0, sum(scores.values()))
 
-    # VIX Index caps
+    # VIX Index caps — India calibrated + direction aware
+    # Key insight: VIX 20-25 on a BULL day = high volatility trending UP
+    # = best intraday setup. Only cap when VIX is high AND market is bearish.
     _vix_level   = st.session_state.get('nifty_context', {}).get('vix_level', 'UNKNOWN')
+    _vix_val_now = st.session_state.get('nifty_context', {}).get('vix', 0) or 0
     _nifty_state = st.session_state.get('nifty_market_state', 'UNKNOWN')
-    if _vix_level == 'EXTREME':    # VIX > 25
-        total = min(total, 50)     # No BUY
-    elif _vix_level == 'HIGH':     # VIX 20-25
-        total = min(total, 68)     # BUY possible, no STRONG BUY
+    _bull_day    = _nifty_state == 'BULL'
+
+    if _vix_level == 'CRISIS':        # VIX > 30 — COVID/war level
+        total = min(total, 40)        # Near-total block regardless of direction
+    elif _vix_level == 'EXTREME':     # VIX 25-30 — serious fear
+        if _bull_day:
+            total = min(total, 65)    # BULL day: allow BUY, block STRONG BUY
+        else:
+            total = min(total, 50)    # BEAR/SIDEWAYS: block all BUY
+    elif _vix_level == 'HIGH':        # VIX 20-25 — expiry/event day
+        if _bull_day:
+            total = min(total, 80)    # BULL day: allow STRONG BUY, slight cap
+        else:
+            total = min(total, 65)    # BEAR/SIDEWAYS: allow BUY, cap STRONG BUY
+    elif _vix_level == 'ELEVATED':    # VIX 16-20 — normal India range
+        pass                          # No cap at all — trade freely
+
+    # Nifty BEAR state additional cap (regardless of VIX)
     if _nifty_state == 'BEAR' and total >= 65:
-        total = min(total, 60)
+        total = min(total, 62)
+
+    # Time-based hard cap
     if scores.get('Time_Context', 0) <= -20:
         total = min(total, 35)
 
@@ -3015,39 +3396,68 @@ with st.sidebar:
     </style>""", unsafe_allow_html=True)
 
     if 'active_page' not in st.session_state:
-        st.session_state['active_page'] = "📊  Stock Summary"
+        st.session_state['active_page'] = "🌅  Dashboard"
 
     _NAV = [
-        ("📊  Stock Summary", "Stock Summary"),
-        ("📉  Price Charts",  "Price Charts"),
-        ("🎯  Trade Signals", "Trade Signals"),
-        ("🔍  Scanners",      "Scanners"),
+        ("🌅  Dashboard",     "Dashboard"),
+        ("📊  Scanner",       "Scanner"),
+        ("🚀  Early Movers",  "Early Movers"),
+        ("🔓  ORB Scanner",   "ORB Scanner"),
         ("💼  Portfolio",     "Portfolio"),
         ("🔔  Alert Log",     "Alert Log"),
-        ("📁  Scan History",  "Scan History"),
     ]
+    # Inject sidebar button styles once — clean single-item nav
+    st.markdown("""
+    <style>
+    /* Remove default Streamlit button styling in sidebar nav */
+    section[data-testid="stSidebar"] div[data-testid="stButton"] button {
+        background: transparent !important;
+        color: #94a3b8 !important;
+        border: 1px solid transparent !important;
+        border-radius: 10px !important;
+        text-align: left !important;
+        font-size: 13px !important;
+        font-weight: 400 !important;
+        padding: 10px 14px !important;
+        width: 100% !important;
+        transition: all 0.15s !important;
+        box-shadow: none !important;
+    }
+    section[data-testid="stSidebar"] div[data-testid="stButton"] button:hover {
+        background: rgba(255,255,255,0.06) !important;
+        color: #e2e8f0 !important;
+        border-color: rgba(255,255,255,0.1) !important;
+    }
+    </style>""", unsafe_allow_html=True)
     st.markdown("<div class='sb-nav-section'>Navigation</div>", unsafe_allow_html=True)
     for _pkey, _plabel in _NAV:
-        _active = st.session_state['active_page'] == _pkey
-        _a_cls  = "active" if _active else ""
-        _disp   = f"Portfolio ({_port_count})" if _plabel == "Portfolio" and _port_count > 0 else _plabel
-        _al_cnt = len(st.session_state.get(ALERT_LOG_KEY, []))
-        _badge  = ""
-        if _plabel == "Portfolio" and _port_count > 0:
-            _badge = f"<span class='sb-nav-badge'>{_port_count}</span>"
-        elif _plabel == "Alert Log" and _al_cnt > 0:
-            _badge = f"<span class='sb-nav-badge'>{_al_cnt}</span>"
-        _icon_color = "#f59e0b" if _active else "#475569"
-        st.markdown(f"""
-        <div class='sb-nav-item {_a_cls}'>
-            <span style='font-size:15px'>{_pkey.split()[0]}</span>
-            <span class='sb-nav-text {_a_cls}'>{_disp}</span>
-            {_badge}
-        </div>""", unsafe_allow_html=True)
-        if st.button(_disp, key=f"navbtn_{_pkey}", use_container_width=True):
-            st.session_state['active_page'] = _pkey; st.rerun()
+        _active  = st.session_state['active_page'] == _pkey
+        _al_cnt  = len(st.session_state.get(ALERT_LOG_KEY, []))
+        _icon    = _pkey.split()[0]   # emoji from key e.g. "🌅"
 
-    active_page = st.session_state.get('active_page', "📊  Stock Summary")
+        # Build display label with badge count
+        _cnt = 0
+        if _plabel == "Portfolio":
+            _cnt = _port_count
+        elif _plabel == "Alert Log":
+            _cnt = _al_cnt
+        elif _plabel == "Early Movers":
+            _cnt = len(st.session_state.get('early_movers', []))
+        elif _plabel == "ORB Scanner":
+            _cnt = len(st.session_state.get('orb_results', []))
+
+        _badge_str = f"  ({_cnt})" if _cnt > 0 else ""
+        _disp      = f"{_icon}  {_plabel}{_badge_str}"
+
+        # Single button — active state via inline style prefix on label
+        _disp_styled = f"{'→ ' if _active else '   '}{_disp}"
+
+        if st.button(_disp_styled, key=f"navbtn_{_pkey}",
+                     use_container_width=True):
+            st.session_state['active_page'] = _pkey
+            st.rerun()
+
+    active_page = st.session_state.get('active_page', "🌅  Dashboard")
 
     # ── Config ────────────────────────────────────────────
     st.markdown("<hr class='sb-section-divider'>", unsafe_allow_html=True)
@@ -3235,18 +3645,619 @@ with st.sidebar:
 #  MAIN CONTENT
 # ─────────────────────────────────────────────
 
-if active_page == "💼  Portfolio":
-    _show_scanner   = False
-    _show_portfolio = True
-    _show_alertlog  = False
+if active_page == "🌅  Dashboard":
+    _show_dashboard   = True
+    _show_scanner     = False
+    _show_portfolio   = False
+    _show_alertlog    = False
+    _show_earlymovers = False
+    _show_orb         = False
+elif active_page == "💼  Portfolio":
+    _show_dashboard   = False
+    _show_scanner     = False
+    _show_portfolio   = True
+    _show_alertlog    = False
+    _show_earlymovers = False
+    _show_orb         = False
 elif active_page == "🔔  Alert Log":
-    _show_scanner   = False
-    _show_portfolio = False
-    _show_alertlog  = True
+    _show_dashboard   = False
+    _show_scanner     = False
+    _show_portfolio   = False
+    _show_alertlog    = True
+    _show_earlymovers = False
+    _show_orb         = False
+elif active_page == "🚀  Early Movers":
+    _show_dashboard   = False
+    _show_scanner     = False
+    _show_portfolio   = False
+    _show_alertlog    = False
+    _show_earlymovers = True
+    _show_orb         = False
+elif active_page == "🔓  ORB Scanner":
+    _show_dashboard   = False
+    _show_scanner     = False
+    _show_portfolio   = False
+    _show_alertlog    = False
+    _show_earlymovers = False
+    _show_orb         = True
+elif active_page == "📊  Scanner":
+    _show_dashboard   = False
+    _show_scanner     = True
+    _show_portfolio   = False
+    _show_alertlog    = False
+    _show_earlymovers = False
+    _show_orb         = False
 else:
-    _show_scanner   = True
-    _show_portfolio = False
-    _show_alertlog  = False
+    # Default → Dashboard
+    _show_dashboard   = True
+    _show_scanner     = False
+    _show_portfolio   = False
+    _show_alertlog    = False
+    _show_earlymovers = False
+    _show_orb         = False
+
+# ─────────────────────────────────────────────
+#  DASHBOARD PAGE
+#  Pre-market intelligence + live market conditions
+#  Opens by default every morning
+# ─────────────────────────────────────────────
+if _show_dashboard:
+
+    st.markdown("""
+    <div class='topbar'>
+        <div>
+            <div class='topbar-title'>🌅 Dashboard — Today's Market Intelligence</div>
+            <div class='topbar-subtitle'>
+                Pre-market conditions · Global cues · Strategy for today ·
+                Live market state
+            </div>
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+    # ── Fetch all dashboard data ──────────────────────────
+    _db_now  = ist_now()
+    _db_hour = _db_now.hour
+    _db_min  = _db_now.minute
+    _db_tm   = _db_hour * 60 + _db_min
+
+    # ── Expiry detection ──────────────────────────────────
+    _expiry_info  = detect_expiry(_db_now)
+    _exp_type     = _expiry_info['expiry_type']
+    _exp_monthly  = _expiry_info['is_monthly']
+    _is_expiry_db = _expiry_info['is_expiry']
+
+    # ── Fetch global markets ──────────────────────────────
+    @st.cache_data(ttl=900)  # 15 min cache
+    def fetch_global_markets():
+        _data = {}
+        _tickers = {
+            'S&P 500':   '^GSPC',
+            'Nasdaq':    '^IXIC',
+            'Dow Jones': '^DJI',
+            'Nikkei':    '^N225',
+            'Hang Seng': '^HSI',
+            'Crude Oil': 'CL=F',
+            'Gold':      'GC=F',
+            'USD/INR':   'USDINR=X',
+        }
+        for _name, _sym in _tickers.items():
+            try:
+                _t   = yf.Ticker(_sym)
+                _h   = _t.history(period='5d', interval='1d')
+                if _h is not None and len(_h) >= 2:
+                    _last  = float(_h['Close'].iloc[-1])
+                    _prev  = float(_h['Close'].iloc[-2])
+                    _chg   = round((_last - _prev) / _prev * 100, 2)
+                    _data[_name] = {'price': round(_last, 2), 'chg': _chg, 'sym': _sym}
+            except Exception:
+                pass
+        return _data
+
+    # Nifty + VIX (reuse existing)
+    _db_mkt_ctx = st.session_state.get('nifty_context', {})
+    _db_vix     = _db_mkt_ctx.get('vix')
+    _db_vix_lvl = _db_mkt_ctx.get('vix_level', 'UNKNOWN')
+    _db_nifty   = _db_mkt_ctx.get('nifty_chg', 0)
+    _db_nstate  = _db_mkt_ctx.get('state', 'UNKNOWN')
+
+    # Sector momentum (from last scan)
+    _db_sectors = st.session_state.get('sector_momentum', {})
+
+    # Open positions summary
+    _db_port    = load_portfolio()
+    _db_open    = [p for p in _db_port if p.get('status') == 'OPEN']
+    _db_closed_today = [p for p in _db_port
+                        if p.get('status') != 'OPEN'
+                        and p.get('exit_date', '').startswith(_db_now.strftime('%d %b %Y'))]
+    _db_today_pnl = sum(_f(p.get('net_pl', 0)) for p in _db_closed_today)
+
+    # ─────────────────────────────────────────────────────
+    # SECTION 1 — DAY TYPE + TIME CONTEXT
+    # ─────────────────────────────────────────────────────
+    # Day type banner
+    if _is_expiry_db:
+        _exp_labels = {
+            'NIFTY_MONTHLY':   ('🚨', 'Nifty MONTHLY Expiry', '#450a0a', '#fca5a5', '#dc2626'),
+            'NIFTY_WEEKLY':    ('⚠️', 'Nifty Weekly Expiry', '#1c1917', '#fbbf24', '#d97706'),
+            'BANKNIFTY_WEEKLY':('⚠️', 'Bank Nifty Weekly Expiry', '#1c1917', '#fbbf24', '#d97706'),
+        }
+        _eico, _elbl, _ebg, _etc, _ebdr = _exp_labels.get(_exp_type, ('⚠️','Expiry','#1c1917','#fbbf24','#d97706'))
+        st.markdown(
+            f"<div style='background:{_ebg};border:2px solid {_ebdr};"
+            f"border-radius:12px;padding:12px 18px;margin-bottom:12px;"
+            f"display:flex;align-items:center;gap:12px'>"
+            f"<span style='font-size:22px'>{_eico}</span>"
+            f"<div>"
+            f"<div style='font-size:15px;font-weight:800;color:{_etc}'>{_elbl} Today</div>"
+            f"<div style='font-size:11px;color:{_etc};opacity:0.8;margin-top:2px'>"
+            f"Entry rules changed · Best window: 10:00–10:30 AM or 1:30–2:30 PM · "
+            f"Exit by 2:30 PM · Banking stocks: avoid</div>"
+            f"</div></div>", unsafe_allow_html=True)
+
+    # Time context bar
+    _time_windows = [
+        (555, 575,  "⏳ 9:15–9:35 AM",   "Warmup — indicators not ready. Use Early Movers only.",          "#d97706","#fffbeb"),
+        (575, 690,  "🟢 9:35–11:30 AM",  "BEST WINDOW — all indicators ready, strongest signals.",         "#15803d","#f0fdf4"),
+        (690, 810,  "🟡 11:30–1:30 PM",  "Lunch zone — avoid new entries, let positions run.",             "#d97706","#fffbeb"),
+        (810, 870,  "🟢 1:30–2:30 PM",   "Second wind — good setups form again.",                          "#15803d","#f0fdf4"),
+        (870, 915,  "🔴 2:30–3:15 PM",   "Danger zone — only exit, no new entries.",                       "#dc2626","#fff5f5"),
+        (915, 9999, "🚫 After 3:15 PM",  "Square off zone — close all positions.",                         "#7f1d1d","#fef2f2"),
+    ]
+    _tw_label = "⚪ Market Closed"
+    _tw_desc  = "NSE trading hours: 9:15 AM – 3:30 PM IST on weekdays."
+    _tw_clr   = "#64748b"; _tw_bg = "#f8fafc"
+    if market_open():
+        for _ts, _te, _tl, _td, _tc, _tbg in _time_windows:
+            if _ts <= _db_tm < _te:
+                _tw_label = _tl; _tw_desc = _td; _tw_clr = _tc; _tw_bg = _tbg
+                break
+    st.markdown(
+        f"<div style='background:{_tw_bg};border:1px solid {_tw_clr}33;"
+        f"border-radius:10px;padding:10px 18px;margin-bottom:14px;"
+        f"display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px'>"
+        f"<div style='font-size:14px;font-weight:700;color:{_tw_clr}'>{_tw_label}</div>"
+        f"<div style='font-size:12px;color:{_tw_clr};opacity:0.8'>{_tw_desc}</div>"
+        f"<div style='font-size:11px;color:{_tw_clr};font-family:var(--font-mono)'>"
+        f"{_db_now.strftime('%H:%M IST')}</div>"
+        f"</div>", unsafe_allow_html=True)
+
+    # ─────────────────────────────────────────────────────
+    # SECTION 2 — LIVE MARKET STATE
+    # ─────────────────────────────────────────────────────
+    st.markdown("<div class='section-header'>📊 Live Market State</div>",
+                unsafe_allow_html=True)
+
+    _mk1, _mk2, _mk3, _mk4 = st.columns(4)
+
+    # Nifty
+    _nc = {'BULL':'#16a34a','SIDEWAYS':'#d97706','BEAR':'#dc2626','UNKNOWN':'#64748b'}.get(_db_nstate,'#64748b')
+    with _mk1:
+        st.markdown(
+            f"<div style='background:{_nc}15;border:1px solid {_nc}44;"
+            f"border-radius:10px;padding:12px 14px'>"
+            f"<div style='font-size:10px;font-weight:700;color:{_nc};letter-spacing:1px'>NIFTY 50</div>"
+            f"<div style='font-size:22px;font-weight:800;color:{_nc};"
+            f"font-family:JetBrains Mono;margin:4px 0'>"
+            f"{'+' if _db_nifty>=0 else ''}{_db_nifty:.2f}%</div>"
+            f"<div style='font-size:11px;color:{_nc}'>{_db_nstate}</div>"
+            f"</div>", unsafe_allow_html=True)
+
+    # VIX
+    _vc = {'CALM':'#16a34a','NORMAL':'#16a34a','ELEVATED':'#d97706',
+           'HIGH':'#ea580c','EXTREME':'#dc2626','CRISIS':'#7f1d1d','UNKNOWN':'#64748b'}.get(_db_vix_lvl,'#64748b')
+    with _mk2:
+        st.markdown(
+            f"<div style='background:{_vc}15;border:1px solid {_vc}44;"
+            f"border-radius:10px;padding:12px 14px'>"
+            f"<div style='font-size:10px;font-weight:700;color:{_vc};letter-spacing:1px'>INDIA VIX</div>"
+            f"<div style='font-size:22px;font-weight:800;color:{_vc};"
+            f"font-family:JetBrains Mono;margin:4px 0'>"
+            f"{f'{_db_vix:.2f}' if _db_vix else '—'}</div>"
+            f"<div style='font-size:11px;color:{_vc}'>{_db_vix_lvl}</div>"
+            f"</div>", unsafe_allow_html=True)
+
+    # Position size guidance
+    _ps_map = {
+        'CALM':    ('100%','#16a34a','Full position size'),
+        'NORMAL':  ('100%','#16a34a','Full position size'),
+        'ELEVATED':('100%','#16a34a','Full position size'),
+        'HIGH':    ('70%', '#d97706','Reduce size by 30%'),
+        'EXTREME': ('50%', '#ea580c','Reduce size by 50%'),
+        'CRISIS':  ('0%',  '#dc2626','Avoid intraday'),
+        'UNKNOWN': ('100%','#64748b','Unknown VIX'),
+    }
+    _ps_pct, _ps_clr, _ps_lbl = _ps_map.get(_db_vix_lvl, ('100%','#64748b','—'))
+    with _mk3:
+        st.markdown(
+            f"<div style='background:{_ps_clr}15;border:1px solid {_ps_clr}44;"
+            f"border-radius:10px;padding:12px 14px'>"
+            f"<div style='font-size:10px;font-weight:700;color:{_ps_clr};letter-spacing:1px'>POSITION SIZE</div>"
+            f"<div style='font-size:22px;font-weight:800;color:{_ps_clr};"
+            f"font-family:JetBrains Mono;margin:4px 0'>{_ps_pct}</div>"
+            f"<div style='font-size:11px;color:{_ps_clr}'>{_ps_lbl}</div>"
+            f"</div>", unsafe_allow_html=True)
+
+    # Today P&L
+    _pnl_clr = '#16a34a' if _db_today_pnl >= 0 else '#dc2626'
+    with _mk4:
+        st.markdown(
+            f"<div style='background:{_pnl_clr}15;border:1px solid {_pnl_clr}44;"
+            f"border-radius:10px;padding:12px 14px'>"
+            f"<div style='font-size:10px;font-weight:700;color:{_pnl_clr};letter-spacing:1px'>TODAY P&L</div>"
+            f"<div style='font-size:22px;font-weight:800;color:{_pnl_clr};"
+            f"font-family:JetBrains Mono;margin:4px 0'>"
+            f"{'+' if _db_today_pnl>=0 else ''}₹{_db_today_pnl:,.0f}</div>"
+            f"<div style='font-size:11px;color:{_pnl_clr}'>"
+            f"{len(_db_closed_today)} closed · {len(_db_open)} open</div>"
+            f"</div>", unsafe_allow_html=True)
+
+    # Refresh market data button
+    _db_ref_col1, _db_ref_col2 = st.columns([3, 1])
+    with _db_ref_col2:
+        if st.button("🔄 Refresh Market Data", key="db_refresh_mkt",
+                     use_container_width=True):
+            _db_kite = get_kite_client()
+            _db_new  = get_nifty_market_state(kite=_db_kite)
+            st.session_state['nifty_context']      = _db_new
+            st.session_state['nifty_market_state'] = _db_new['state']
+            st.session_state['nifty_ctx_date']     = _db_now.strftime('%Y-%m-%d %H:%M')
+            st.rerun()
+    with _db_ref_col1:
+        _ctx_date = st.session_state.get('nifty_ctx_date', '')
+        if _ctx_date:
+            st.markdown(
+                f"<div style='font-size:11px;color:#94a3b8;padding:10px 0'>"
+                f"Last updated: {_ctx_date}</div>", unsafe_allow_html=True)
+
+    # ─────────────────────────────────────────────────────
+    # SECTION 3 — GLOBAL MARKETS
+    # ─────────────────────────────────────────────────────
+    st.markdown("<div class='section-header'>🌍 Global Markets</div>",
+                unsafe_allow_html=True)
+
+    with st.spinner("Fetching global markets..."):
+        _global = fetch_global_markets()
+
+    if _global:
+        _gm_cols = st.columns(4)
+        _gm_order = ['S&P 500','Nasdaq','Nikkei','Hang Seng','Crude Oil','Gold','USD/INR','Dow Jones']
+        for _gi, _gname in enumerate([n for n in _gm_order if n in _global]):
+            _gd   = _global[_gname]
+            _gc   = '#16a34a' if _gd['chg'] >= 0 else '#dc2626'
+            _gi2  = '#f0fdf4' if _gd['chg'] >= 0 else '#fff5f5'
+            _garr = '▲' if _gd['chg'] >= 0 else '▼'
+            with _gm_cols[_gi % 4]:
+                st.markdown(
+                    f"<div style='background:{_gi2};border:1px solid {_gc}33;"
+                    f"border-radius:8px;padding:10px 12px;margin-bottom:8px'>"
+                    f"<div style='font-size:10px;font-weight:700;color:#64748b;"
+                    f"letter-spacing:1px'>{_gname.upper()}</div>"
+                    f"<div style='font-size:16px;font-weight:800;color:{_gc};"
+                    f"font-family:JetBrains Mono;margin:3px 0'>"
+                    f"{_garr} {'+' if _gd['chg']>=0 else ''}{_gd['chg']:.2f}%</div>"
+                    f"<div style='font-size:10px;color:#94a3b8'>{_gd['price']:,.1f}</div>"
+                    f"</div>", unsafe_allow_html=True)
+    else:
+        st.markdown(
+            "<div style='font-size:12px;color:#94a3b8;padding:8px 0'>"
+            "Global market data unavailable — check internet connection</div>",
+            unsafe_allow_html=True)
+
+    # ─────────────────────────────────────────────────────
+    # SECTION 4 — TODAY'S STRATEGY
+    # ─────────────────────────────────────────────────────
+    st.markdown("<div class='section-header'>🎯 Today's Strategy</div>",
+                unsafe_allow_html=True)
+
+    # ── NSE Holiday detection ─────────────────────────────
+    # Fetched live from NSE API — no hardcoded list
+    _today_str   = _db_now.strftime('%Y-%m-%d')
+    _is_weekend  = _db_now.weekday() >= 5
+    _is_holiday, _holiday_name = is_nse_holiday(_today_str)
+    _is_trading  = not _is_weekend and not _is_holiday
+
+    # Show NSE API status + refresh option in sidebar area
+    _nse_cache_key = f"nse_holidays_{ist_now().strftime('%Y')}"
+    _hol_fetched   = _nse_cache_key in st.session_state
+    _hol_count     = len(st.session_state.get(_nse_cache_key, {}))
+    _hol_source    = "NSE API" if _hol_count > 5 else ("pandas_market_calendars" if _hol_count > 0 else "Not fetched yet")
+    if st.sidebar.button("🔄 Refresh Holidays", key="refresh_nse_holidays",
+                         help="Force re-fetch holiday list from NSE API"):
+        st.session_state.pop(_nse_cache_key, None)
+        st.rerun()
+
+    # Holiday / weekend banner
+    if _is_holiday:
+        st.markdown(
+            f"<div style='background:#1e1b4b;border:2px solid #818cf8;"
+            f"border-radius:12px;padding:12px 18px;margin-bottom:12px;"
+            f"display:flex;align-items:center;gap:12px'>"
+            f"<span style='font-size:22px'>🏖️</span>"
+            f"<div>"
+            f"<div style='font-size:15px;font-weight:800;color:#c7d2fe'>"
+            f"NSE Holiday — {_holiday_name}</div>"
+            f"<div style='font-size:11px;color:#a5b4fc;margin-top:2px'>"
+            f"Indian stock market is closed today "
+            f"({_db_now.strftime('%A, %d %B %Y')}). "
+            f"No trading. Use this time to review charts and prepare your watchlist.</div>"
+            f"</div></div>", unsafe_allow_html=True)
+    elif _is_weekend:
+        st.markdown(
+            f"<div style='background:#1e1b4b;border:2px solid #818cf8;"
+            f"border-radius:12px;padding:12px 18px;margin-bottom:12px;"
+            f"display:flex;align-items:center;gap:12px'>"
+            f"<span style='font-size:22px'>📅</span>"
+            f"<div>"
+            f"<div style='font-size:15px;font-weight:800;color:#c7d2fe'>"
+            f"{'Saturday' if _db_now.weekday()==5 else 'Sunday'} — Market Closed</div>"
+            f"<div style='font-size:11px;color:#a5b4fc;margin-top:2px'>"
+            f"NSE opens Monday 9:15 AM. Good time to review last week and plan for next.</div>"
+            f"</div></div>", unsafe_allow_html=True)
+
+    # ── Strategy cards ────────────────────────────────────
+    def build_strategy_cards():
+        cards = []
+
+        # Card builder helper
+        def card(icon, title, body, color='#374151', bg='#f8fafc', border='#e2e8f0'):
+            return {'icon':icon,'title':title,'body':body,'color':color,'bg':bg,'border':border}
+
+        if not _is_trading:
+            cards.append(card('🏖️','Market Closed',
+                'No trading today. Review your scan history and update watchlist for next session.',
+                '#6366f1','#eef2ff','#c7d2fe'))
+            return cards
+
+        # Day type card
+        if _is_expiry_db:
+            _exp_names = {
+                'NIFTY_MONTHLY':   'Nifty MONTHLY Expiry',
+                'NIFTY_WEEKLY':    'Nifty Weekly Expiry',
+                'BANKNIFTY_WEEKLY':'Bank Nifty Weekly Expiry',
+            }
+            cards.append(card('⚠️', _exp_names.get(_exp_type,'Expiry Day'),
+                'Avoid entries before 10 AM · Entry windows: 10:00–10:30 AM and 1:30–2:30 PM · '
+                'Exit ALL by 2:30 PM · Skip banking stocks — options pinning risk',
+                '#92400e','#fffbeb','#fde68a'))
+        else:
+            cards.append(card('✅','Normal Trading Day',
+                'Best entry window: 9:35–11:30 AM · Second window: 1:30–2:30 PM · '
+                'Exit by 3:00 PM · Square off by 3:15 PM',
+                '#15803d','#f0fdf4','#bbf7d0'))
+
+        # VIX card
+        _vix_cards = {
+            'CALM':    ('📉','VIX Calm — Perfect Conditions',
+                        'Trending day likely. Full position size. Momentum stocks work well.',
+                        '#15803d','#f0fdf4','#bbf7d0'),
+            'NORMAL':  ('📊','VIX Normal — Best Conditions',
+                        'Trade full size. Standard rules. All signals valid.',
+                        '#15803d','#f0fdf4','#bbf7d0'),
+            'ELEVATED':('📊','VIX Elevated — Still Good',
+                        'Normal for India. Full position size. Trade freely.',
+                        '#15803d','#f0fdf4','#bbf7d0'),
+            'HIGH':    ('⚠️','VIX High — Reduce Size',
+                        'Trade at 70% position size. Widen SL slightly. Only score ≥ 75 signals.',
+                        '#92400e','#fffbeb','#fde68a'),
+            'EXTREME': ('🔴','VIX Extreme — Trade Cautiously',
+                        'Trade at 50% position size. Only STRONG BUY signals (score ≥ 80). Tight SL.',
+                        '#991b1b','#fff5f5','#fecaca'),
+            'CRISIS':  ('🚫','VIX Crisis — Avoid Intraday',
+                        'Market in extreme fear. Avoid new intraday positions today.',
+                        '#7f1d1d','#fef2f2','#fecaca'),
+            'UNKNOWN': ('❓','VIX Unknown',
+                        'Click Refresh Market Data to fetch current VIX level.',
+                        '#64748b','#f8fafc','#e2e8f0'),
+        }
+        _vc = _vix_cards.get(_db_vix_lvl, _vix_cards['UNKNOWN'])
+        cards.append(card(*_vc))
+
+        # Nifty direction card
+        _nifty_cards = {
+            'BULL':     ('📈','Nifty Bullish',
+                         'Favour long entries. Strong RS stocks outperform. Avoid short setups.',
+                         '#15803d','#f0fdf4','#bbf7d0'),
+            'BEAR':     ('📉','Nifty Bearish',
+                         'Very selective longs only — RS > 2% minimum. Avoid momentum buys.',
+                         '#991b1b','#fff5f5','#fecaca'),
+            'SIDEWAYS': ('↔️','Nifty Sideways',
+                         'Stock-specific moves only. Wait for clear direction before entering.',
+                         '#92400e','#fffbeb','#fde68a'),
+            'UNKNOWN':  ('❓','Nifty Unknown',
+                         'Refresh market data to get current Nifty direction.',
+                         '#64748b','#f8fafc','#e2e8f0'),
+        }
+        _nc2 = _nifty_cards.get(_db_nstate, _nifty_cards['UNKNOWN'])
+        cards.append(card(*_nc2))
+
+        # Global cue card
+        sp_chg  = _global.get('S&P 500',{}).get('chg',0) if _global else 0
+        nas_chg = _global.get('Nasdaq',{}).get('chg',0) if _global else 0
+        if abs(sp_chg) >= 1.0 or abs(nas_chg) >= 1.0:
+            _gl_lines = []
+            if sp_chg >= 1.0:
+                _gl_lines.append(f"S&P 500 +{sp_chg:.1f}% — positive for IT and financials")
+            elif sp_chg <= -1.0:
+                _gl_lines.append(f"S&P 500 {sp_chg:.1f}% — headwind for IT stocks")
+            if nas_chg >= 1.5:
+                _gl_lines.append(f"Nasdaq +{nas_chg:.1f}% — TCS, INFY, HCLTECH likely to open strong")
+            elif nas_chg <= -1.5:
+                _gl_lines.append(f"Nasdaq {nas_chg:.1f}% — avoid IT stocks today")
+            _gl_pos = sp_chg >= 0 and nas_chg >= 0
+            cards.append(card(
+                '🌍','Global Cues — ' + ('Positive' if _gl_pos else 'Negative'),
+                ' · '.join(_gl_lines),
+                '#15803d' if _gl_pos else '#991b1b',
+                '#f0fdf4' if _gl_pos else '#fff5f5',
+                '#bbf7d0' if _gl_pos else '#fecaca'))
+
+        # Tools card
+        if _is_expiry_db:
+            _tools = 'ORB Scanner at 10:00 AM → Scanner after 10:30 AM'
+        elif _db_nstate == 'BULL' and _db_vix_lvl in ('CALM','NORMAL','ELEVATED'):
+            _tools = 'Early Movers at 9:15 AM → ORB at 9:20 AM → Scanner at 9:35 AM'
+        else:
+            _tools = 'Skip Early Movers → Scanner at 9:35 AM for confirmed signals'
+        cards.append(card('📱','Tools for Today', _tools, '#1d4ed8','#eff6ff','#bfdbfe'))
+
+        return cards
+
+    _strat_cards = build_strategy_cards()
+    # Render as 2-column grid of cards
+    _sc_rows = [_strat_cards[i:i+2] for i in range(0, len(_strat_cards), 2)]
+    for _sc_row in _sc_rows:
+        _sc_cols = st.columns(len(_sc_row))
+        for _sci, _sc in enumerate(_sc_row):
+            with _sc_cols[_sci]:
+                st.markdown(
+                    f"<div style='background:{_sc['bg']};border:1px solid {_sc['border']};"
+                    f"border-radius:10px;padding:14px 16px;margin-bottom:8px;height:100%'>"
+                    f"<div style='display:flex;align-items:center;gap:8px;margin-bottom:6px'>"
+                    f"<span style='font-size:16px'>{_sc['icon']}</span>"
+                    f"<span style='font-size:12px;font-weight:700;color:{_sc['color']}'>"
+                    f"{_sc['title']}</span></div>"
+                    f"<div style='font-size:11px;color:#374151;line-height:1.7'>"
+                    f"{_sc['body']}</div>"
+                    f"</div>", unsafe_allow_html=True)
+
+
+        _lines = []
+
+        # Day type
+        if _is_expiry_db:
+            _exp_names = {
+                'NIFTY_MONTHLY':   'Nifty MONTHLY Expiry (most volatile)',
+                'NIFTY_WEEKLY':    'Nifty Weekly Expiry',
+                'BANKNIFTY_WEEKLY':'Bank Nifty Weekly Expiry',
+            }
+            _lines.append(f"⚠️ <b>{_exp_names.get(_exp_type,'Expiry Day')}</b> — special rules apply")
+            _lines.append("🔴 Avoid entries before 10:00 AM — fake gap moves likely")
+            _lines.append("🟢 Best windows: 10:00–10:30 AM or 1:30–2:30 PM only")
+            _lines.append("🏦 Avoid banking stocks (HDFCBANK, ICICIBANK, AXISBANK) — options pinning")
+            _lines.append("🚪 Exit ALL positions by 2:30 PM — last hour extremely volatile")
+        else:
+            _lines.append("✅ Normal trading day — standard rules apply")
+            _lines.append("🟢 Best entry window: 9:35 AM – 11:30 AM")
+            _lines.append("🚪 Start exiting by 3:00 PM · Square off by 3:15 PM")
+
+
+    # SECTION 5 — SECTOR HEATMAP
+    # ─────────────────────────────────────────────────────
+    if _db_sectors:
+        st.markdown("<div class='section-header'>🗺️ Sector Momentum</div>",
+                    unsafe_allow_html=True)
+        _sorted_sectors = sorted(_db_sectors.items(), key=lambda x: x[1], reverse=True)
+        _hm_cols = st.columns(5)
+        for _si, (_sname, _schg) in enumerate(_sorted_sectors[:20]):
+            _sc  = ('#16a34a' if _schg >= 1.0 else
+                    '#65a30d' if _schg >= 0.3 else
+                    '#d97706' if _schg >= -0.3 else
+                    '#ea580c' if _schg >= -1.0 else '#dc2626')
+            _sbg = ('#f0fdf4' if _schg >= 1.0 else
+                    '#f7fee7' if _schg >= 0.3 else
+                    '#fffbeb' if _schg >= -0.3 else
+                    '#fff7ed' if _schg >= -1.0 else '#fff5f5')
+            with _hm_cols[_si % 5]:
+                st.markdown(
+                    f"<div style='background:{_sbg};border:1px solid {_sc}33;"
+                    f"border-radius:8px;padding:8px 10px;margin-bottom:6px;text-align:center'>"
+                    f"<div style='font-size:10px;font-weight:700;color:#64748b'>{_sname}</div>"
+                    f"<div style='font-size:14px;font-weight:800;color:{_sc};"
+                    f"font-family:JetBrains Mono'>"
+                    f"{'+' if _schg>=0 else ''}{_schg:.1f}%</div>"
+                    f"</div>", unsafe_allow_html=True)
+        st.markdown(
+            "<div style='font-size:11px;color:#94a3b8;margin-top:-4px'>"
+            "Based on last scan — run Scanner to update</div>",
+            unsafe_allow_html=True)
+    else:
+        st.markdown(
+            "<div style='background:#f8fafc;border:1px solid #e2e8f0;"
+            "border-radius:10px;padding:14px 18px;margin-top:8px'>"
+            "<div style='font-size:13px;font-weight:600;color:#1a2035;margin-bottom:4px'>"
+            "🗺️ Sector Heatmap</div>"
+            "<div style='font-size:12px;color:#94a3b8'>"
+            "Run a scan first to see sector momentum. "
+            "Go to 📊 Scanner → click Scan Now.</div>"
+            "</div>", unsafe_allow_html=True)
+
+    # ─────────────────────────────────────────────────────
+    # SECTION 6 — OPEN POSITIONS QUICK VIEW
+    # ─────────────────────────────────────────────────────
+    if _db_open:
+        st.markdown("<div class='section-header'>💼 Open Positions</div>",
+                    unsafe_allow_html=True)
+        _op_cols = st.columns(min(len(_db_open), 3))
+        for _opi, _op in enumerate(_db_open[:3]):
+            _op_sym   = _op.get('symbol', '')
+            _op_entry = _f(_op.get('entry', 0))
+            _op_qty   = int(_f(_op.get('qty', 0)))
+            _op_sl    = _f(_op.get('stop_loss', 0))
+            # Get cached live price
+            _op_live  = st.session_state.get('pf_live_prices', {}).get(_op_sym, _op_entry)
+            _op_pl    = (_op_live - _op_entry) * _op_qty
+            _op_pct   = (_op_pl / (_op_entry * _op_qty)) * 100 if _op_entry > 0 else 0
+            _op_clr   = '#16a34a' if _op_pl >= 0 else '#dc2626'
+            _op_sl_hit = _op_sl > 0 and _op_live <= _op_sl
+            with _op_cols[_opi]:
+                st.markdown(
+                    f"<div style='background:{'#fef2f2' if _op_sl_hit else '#ffffff'};"
+                    f"border:1.5px solid {'#dc2626' if _op_sl_hit else '#e8ecf3'};"
+                    f"border-radius:10px;padding:12px 14px'>"
+                    f"<div style='font-size:14px;font-weight:800;color:#1a2035'>{_op_sym}</div>"
+                    f"<div style='font-size:11px;color:#64748b;margin-top:2px'>"
+                    f"Entry ₹{_op_entry:,.2f} · {_op_qty} shares</div>"
+                    f"<div style='font-size:18px;font-weight:800;color:{_op_clr};"
+                    f"font-family:JetBrains Mono;margin:6px 0'>"
+                    f"{'+' if _op_pl>=0 else ''}₹{_op_pl:,.0f}</div>"
+                    f"<div style='font-size:11px;color:{_op_clr}'>"
+                    f"{'+' if _op_pct>=0 else ''}{_op_pct:.2f}%</div>"
+                    f"{'<div style=\"font-size:11px;font-weight:700;color:#dc2626;margin-top:4px\">🛑 SL HIT — Exit Now</div>' if _op_sl_hit else ''}"
+                    f"</div>", unsafe_allow_html=True)
+        if len(_db_open) > 3:
+            st.markdown(
+                f"<div style='font-size:12px;color:#94a3b8;margin-top:4px'>"
+                f"+ {len(_db_open)-3} more positions — see 💼 Portfolio</div>",
+                unsafe_allow_html=True)
+
+    # ─────────────────────────────────────────────────────
+    # SECTION 7 — QUICK NAVIGATION CARDS
+    # ─────────────────────────────────────────────────────
+    st.markdown("<div class='section-header'>⚡ Quick Actions</div>",
+                unsafe_allow_html=True)
+
+    _qa_items = [
+        ("📊", "Scanner",       "Scan 498 stocks\nShortlist · Deep analysis",    "📊  Scanner"),
+        ("🚀", "Early Movers",  "Gap-up stocks\nFirst 15 minutes",               "🚀  Early Movers"),
+        ("🔓", "ORB Scanner",   "Opening range\n9:20 AM – 10:30 AM",             "🔓  ORB Scanner"),
+        ("💼", "Portfolio",     "Open positions\nP&L · Square off",              "💼  Portfolio"),
+    ]
+    _qa_cols = st.columns(4, gap="small")
+    for _qi, (_qicon, _qlbl, _qdesc, _qpage) in enumerate(_qa_items):
+        with _qa_cols[_qi]:
+            # Card HTML — fixed height so all 4 are identical size
+            _qa_active = (active_page == _qpage)
+            _qa_bg     = "#1a2035"  if _qa_active else "#ffffff"
+            _qa_clr    = "#f59e0b"  if _qa_active else "#1a2035"
+            _qa_sub    = "rgba(255,255,255,0.6)" if _qa_active else "#64748b"
+            _qa_bdr    = "#f59e0b"  if _qa_active else "#e8ecf3"
+            st.markdown(
+                f"<div style='background:{_qa_bg};border:1.5px solid {_qa_bdr};"
+                f"border-radius:12px;padding:16px 12px;text-align:center;"
+                f"min-height:100px;display:flex;flex-direction:column;"
+                f"align-items:center;justify-content:center;gap:6px'>"
+                f"<div style='font-size:26px'>{_qicon}</div>"
+                f"<div style='font-size:13px;font-weight:700;color:{_qa_clr}'>{_qlbl}</div>"
+                f"<div style='font-size:10px;color:{_qa_sub};line-height:1.5;white-space:pre-line'>{_qdesc}</div>"
+                f"</div>", unsafe_allow_html=True)
+            # Invisible button overlay — takes full column width
+            if st.button(f"Go to {_qlbl}", key=f"db_nav_{_qi}",
+                         use_container_width=True):
+                st.session_state['active_page'] = _qpage
+                st.rerun()
+
+
+
 
 # ─────────────────────────────────────────────
 #  SCANNER PAGE
@@ -3319,18 +4330,37 @@ if _show_scanner:
     if not market_open() and interval == '1minute':
         _interval_warn = " &nbsp;·&nbsp; <span style='color:#ef4444'>⚠️ 1min unavailable after hours — switch to 15min or 1hr</span>"
 
+    # ── Last scanned display ──────────────────────────────
+    _secs_since  = int(time.time() - st.session_state.get('last_auto_refresh', time.time()))
+    _ago_str     = (f"{_secs_since}s ago" if _secs_since < 60
+                    else f"{_secs_since//60}m {_secs_since%60}s ago")
+    _refresh_str = (f" &nbsp;·&nbsp; 🕐 Last scanned <b>{_ago_str}</b>"
+                    if 'scan_results' in st.session_state else "")
+
     # ── Nifty + VIX live bar (refreshes independently of scan) ──
-    _sb1, _sb2 = st.columns([4, 1])
+    _sb1, _sb2, _sb3 = st.columns([4, 1, 1])
     with _sb1:
         st.markdown(f"""
         <div style='background:#f1f5f9;border:1px solid #e2e8f0;border-radius:10px;
                     padding:8px 18px;margin-bottom:8px;font-size:12px;color:#475569'>
-            {_mkt_str} &nbsp;·&nbsp; Last scan: {st.session_state.get('scan_time','—')}{_dur_str2}{_missing_str}{_interval_warn}
+            {_mkt_str} &nbsp;·&nbsp; Last scan: {st.session_state.get('scan_time','—')}{_dur_str2}{_missing_str}{_interval_warn}{_refresh_str}
         </div>""", unsafe_allow_html=True)
     with _sb2:
         _refresh_mkt = st.button("🔄 Market Data", key="refresh_market_ctx",
                                   use_container_width=True,
                                   help="Re-fetch Nifty + VIX without running full scan")
+    with _sb3:
+        _manual_rescan = st.button("🔁 Rescan", key="manual_rescan",
+                                    use_container_width=True,
+                                    type="primary",
+                                    help="Manually re-run the full scan with fresh data")
+        if _manual_rescan:
+            _DATA_CACHE.clear()
+            st.session_state.pop('scan_results', None)
+            st.session_state.pop('scan_raw', None)
+            st.session_state.pop('scan_key', None)
+            reset_refresh_timer()
+            st.rerun()
 
     # Refresh market context on button click
     if _refresh_mkt:
@@ -3354,15 +4384,21 @@ if _show_scanner:
 
         _nc_bar = {'BULL':'#16a34a','SIDEWAYS':'#d97706','BEAR':'#dc2626','UNKNOWN':'#64748b'}.get(_nifty_state_bar,'#64748b')
         _vc_bar = {
-            'CALM':'#16a34a','NORMAL':'#16a34a','ELEVATED':'#d97706',
-            'HIGH':'#dc2626','EXTREME':'#7f1d1d','UNKNOWN':'#64748b'
+            'CALM':    '#16a34a',
+            'NORMAL':  '#16a34a',
+            'ELEVATED':'#d97706',
+            'HIGH':    '#ea580c',
+            'EXTREME': '#dc2626',
+            'CRISIS':  '#7f1d1d',
+            'UNKNOWN': '#64748b',
         }.get(_vix_level_bar,'#64748b')
         _vix_adv = {
-            'CALM':     '✅ Very calm — ideal trading day',
-            'NORMAL':   '✅ Normal — best conditions',
-            'ELEVATED': '⚠️ Slight caution — trade normally',
-            'HIGH':     '⚠️ Reduce position size by 50%',
-            'EXTREME':  '🚫 VIX > 25 — avoid intraday',
+            'CALM':     '✅ VIX < 13 — very calm, ideal trading day',
+            'NORMAL':   '✅ VIX 13–16 — best conditions, trade freely',
+            'ELEVATED': '✅ VIX 16–20 — normal for India, trade normally',
+            'HIGH':     '⚠️ VIX 20–25 — reduce position size 30%',
+            'EXTREME':  '⚠️ VIX 25–30 — only strongest signals (score ≥ 75)',
+            'CRISIS':   '🚫 VIX > 30 — avoid intraday (COVID/war level)',
             'UNKNOWN':  '',
         }.get(_vix_level_bar, '')
 
@@ -3399,12 +4435,20 @@ if _show_scanner:
                 f"<div style='font-size:10px;color:#64748b'>🕐 {_ctx_date}</div>"
                 f"</div>", unsafe_allow_html=True)
 
-        # Only show EXTREME warning when truly current AND VIX is still extreme
-        if _vix_level_bar == 'EXTREME':
+        # Warning banner — only for CRISIS (VIX > 30) or EXTREME on BEAR day
+        _show_vix_warn = (
+            _vix_level_bar == 'CRISIS' or
+            (_vix_level_bar == 'EXTREME' and _nifty_state_bar == 'BEAR')
+        )
+        if _show_vix_warn:
+            _warn_msg = (
+                "🚫 India VIX > 30 — True market crisis. Avoid intraday trading today."
+                if _vix_level_bar == 'CRISIS'
+                else "⚠️ VIX 25–30 + Nifty BEAR — High risk. Only trade score ≥ 75 with strong RS."
+            )
             _ext_col1, _ext_col2 = st.columns([5, 1])
             with _ext_col1:
-                st.warning("🚫 India VIX > 22 — Intraday trading extremely risky. "
-                           "All verdicts capped at WATCH. Consider staying out.")
+                st.warning(_warn_msg)
             with _ext_col2:
                 if st.button("✕ Dismiss", key="dismiss_vix_warning"):
                     st.session_state['nifty_ctx_date'] = ''
@@ -3511,6 +4555,7 @@ if _show_scanner:
     min_rank     = VERDICT_RANK.get(min_verdict, 2)
     cache_key    = f"{interval}_{period}_{capital}_{risk_pct}_{','.join(sorted(selected_stocks))}"
 
+    # ── Auto-refresh logic ────────────────────────────────
     if run_btn or ('scan_results' not in st.session_state) or (st.session_state.get('scan_key') != cache_key):
         if not selected_stocks:
             st.warning("⚠️ No stocks selected."); st.stop()
@@ -3525,6 +4570,16 @@ if _show_scanner:
             if _k.startswith('chart_fig_') or _k.startswith('chart_interval_'):
                 del st.session_state[_k]
 
+        # ── Priority-first ordering ───────────────────────
+        # Scan high-priority stocks first so results appear
+        # in ~20 seconds instead of waiting 90s for all 498.
+        # Priority stocks = Nifty 50 + high beta + high volume
+        _priority_set  = set(PRIORITY_STOCKS)
+        _priority_first = [s for s in selected_stocks if s in _priority_set]
+        _rest           = [s for s in selected_stocks if s not in _priority_set]
+        _ordered_stocks = _priority_first + _rest
+        total           = len(_ordered_stocks)
+
         # ── Priority 1: Fetch Nifty + VIX market state FIRST ─
         _prog = st.progress(0, text="🔍 Checking Nifty + VIX market state...")
         _mkt_ctx = get_nifty_market_state(kite=kite)
@@ -3537,14 +4592,22 @@ if _show_scanner:
         _nifty_icons  = {'BULL':'📈','SIDEWAYS':'↔️','BEAR':'📉','UNKNOWN':'❓'}
         _vix_val      = _mkt_ctx.get('vix')
         _vix_level    = _mkt_ctx.get('vix_level','UNKNOWN')
-        _vix_colors   = {'CALM':'#16a34a','NORMAL':'#16a34a','ELEVATED':'#d97706',
-                         'HIGH':'#dc2626','EXTREME':'#7f1d1d','UNKNOWN':'#64748b'}
+        _vix_colors   = {
+            'CALM':    '#16a34a',
+            'NORMAL':  '#16a34a',
+            'ELEVATED':'#d97706',
+            'HIGH':    '#ea580c',
+            'EXTREME': '#dc2626',
+            'CRISIS':  '#7f1d1d',
+            'UNKNOWN': '#64748b',
+        }
         _vix_advice   = {
-            'CALM':     'VIX < 12 — Calm market, trend days likely ✅',
-            'NORMAL':   'VIX 12–15 — Normal conditions ✅',
-            'ELEVATED': 'VIX 15–18 — Elevated fear, reduce position size ⚠️',
-            'HIGH':     'VIX 18–22 — High fear, trade only strongest signals ⚠️',
-            'EXTREME':  'VIX > 22 — EXTREME FEAR — Avoid intraday entirely 🚫',
+            'CALM':     'VIX < 13 — Very calm, ideal conditions ✅',
+            'NORMAL':   'VIX 13–16 — Best conditions, trade freely ✅',
+            'ELEVATED': 'VIX 16–20 — Normal for India, trade freely ✅',
+            'HIGH':     'VIX 20–25 — Reduce position size 30% ⚠️',
+            'EXTREME':  'VIX 25–30 — Only strongest signals (score ≥ 75) ⚠️',
+            'CRISIS':   'VIX > 30 — Avoid intraday (COVID/war level) 🚫',
             'UNKNOWN':  'VIX unavailable',
         }
         _nc = _nifty_colors.get(_nifty_state, '#64748b')
@@ -3569,7 +4632,7 @@ if _show_scanner:
             f"</div>",
             unsafe_allow_html=True)
 
-        if _vix_level == 'EXTREME':
+        if _vix_level in ('CRISIS', 'EXTREME'):
             st.session_state['vix_extreme_warned'] = True
 
         # ── Progress UI ───────────────────────────────────
@@ -3577,12 +4640,68 @@ if _show_scanner:
         _stat    = st.empty()
         _sym_ph  = st.empty()
 
-        for idx, symbol in enumerate(selected_stocks):
+        _priority_done   = False
+        _live_ph         = st.empty()   # live results — updates every stock
+
+        for idx, symbol in enumerate(_ordered_stocks):
             pct        = int(((idx + 1) / total) * 100)
             elapsed    = int(time.time() - scan_start)
             eta        = int((elapsed / (idx + 1)) * (total - idx - 1)) if idx > 0 else 0
             eta_str    = f"{eta//60}m {eta%60}s" if eta >= 60 else f"{eta}s"
             sym_clean  = symbol.replace('.NS', '')
+
+            # ── Live results panel — updates after every stock ──
+            # Show BUY+ signals immediately as they are found.
+            # This replaces the old "one-time flash after priority batch" approach.
+            # Now you see results streaming in real time throughout the scan.
+            _live_buys = [r for r in raw_results
+                          if r.get('_verdict','') in ('⭐⭐⭐ STRONG BUY','⭐⭐ BUY')]
+            _live_buys.sort(key=lambda x: x.get('_pick_score',0), reverse=True)
+
+            if _live_buys:
+                _is_priority_phase = idx < len(_priority_first)
+                _phase_label = (
+                    f"⚡ Priority stocks ({idx}/{len(_priority_first)}) · {len(_live_buys)} BUY signals"
+                    if _is_priority_phase else
+                    f"🔍 Full scan ({idx}/{total}) · {len(_live_buys)} BUY signals"
+                )
+                _live_html = (
+                    f"<div style='background:#0f172a;border:1.5px solid #16a34a44;"
+                    f"border-radius:12px;padding:12px 16px;margin-bottom:8px'>"
+                    f"<div style='font-size:11px;font-weight:700;color:#34d399;margin-bottom:8px'>"
+                    f"{_phase_label}</div>"
+                    f"<div style='display:flex;gap:6px;flex-wrap:wrap'>"
+                )
+                for _lb in _live_buys[:8]:
+                    _lb_sym   = _lb['symbol'].replace('.NS','')
+                    _lb_chg   = _lb.get('change_pct', 0)
+                    _lb_score = _lb.get('_pick_score', 0)
+                    _lb_verd  = _lb.get('_verdict','')
+                    _lb_vol   = _lb.get('vol_ratio', 0)
+                    _lb_cc    = "#34d399" if _lb_chg >= 0 else "#f87171"
+                    _lb_vbg   = "#dcfce722" if '⭐⭐⭐' in _lb_verd else "#dbeafe22"
+                    _lb_vbc   = "#34d399" if '⭐⭐⭐' in _lb_verd else "#93c5fd"
+                    # Signal age badge
+                    _lb_age   = _lb.get('sig_age_candles', 0)
+                    _lb_fresh = "🟢" if _lb_age <= 2 else ("🟡" if _lb_age <= 5 else "🔴")
+                    _live_html += (
+                        f"<div style='background:{_lb_vbg};border:1px solid {_lb_vbc}44;"
+                        f"border-radius:8px;padding:6px 12px;min-width:110px'>"
+                        f"<div style='font-size:13px;font-weight:800;color:#f8fafc'>{_lb_sym}</div>"
+                        f"<div style='font-size:10px;margin-top:2px'>"
+                        f"<span style='color:{_lb_cc}'>{'+' if _lb_chg>=0 else ''}{_lb_chg:.1f}%</span>"
+                        f" &nbsp;·&nbsp; <span style='color:#a78bfa'>Score {_lb_score}</span>"
+                        f"</div>"
+                        f"<div style='font-size:10px;margin-top:1px;color:#94a3b8'>"
+                        f"Vol {_lb_vol:.1f}× &nbsp;·&nbsp; {_lb_fresh} {_lb_age}c ago</div>"
+                        f"</div>"
+                    )
+                _live_html += "</div></div>"
+                _live_ph.markdown(_live_html, unsafe_allow_html=True)
+
+            # Mark when priority phase ends
+            if not _priority_done and idx >= len(_priority_first):
+                _priority_done = True
 
             _prog.progress(pct, text=f"Scanning {idx+1}/{total} · {sym_clean} · {pct}%")
             _sym_ph.markdown(
@@ -3620,6 +4739,25 @@ if _show_scanner:
                 live_conf = min(int((live_bull / 100) * 100), 100)
                 price     = float(latest['Close']) if not pd.isna(latest['Close']) else 0.0
 
+                # ── Signal age — candles since BUY signal fired ──
+                # 0-2 candles = fresh signal → enter now
+                # 3-5 candles = moderate → check if price extended
+                # 6+ candles  = stale → likely chasing
+                _sig_age_candles = 0
+                _sig_price_at_fire = price
+                _sig_move_since    = 0.0
+                if last_sig is not None and last_sig_val == 1:
+                    try:
+                        _sig_idx       = df.index.get_loc(last_sig.name)
+                        _curr_idx      = len(df) - 1
+                        _sig_age_candles = _curr_idx - _sig_idx
+                        _sig_price_at_fire = float(last_sig['Close'])
+                        if _sig_price_at_fire > 0:
+                            _sig_move_since = round(
+                                (price - _sig_price_at_fire) / _sig_price_at_fire * 100, 2)
+                    except Exception:
+                        pass
+
                 # ── Candle warmup status ──────────────────
                 _warmup, _n_today, _mins, _pct_ready = candle_warmup_status(df, interval)
                 trade_plan = get_intraday_trade_plan(df, capital, risk_pct)
@@ -3636,6 +4774,9 @@ if _show_scanner:
                     'live_bull':   live_bull,
                     'live_bear':   live_bear,
                     'live_conf':   live_conf,
+                    'sig_age_candles':   _sig_age_candles,
+                    'sig_price_at_fire': _sig_price_at_fire,
+                    'sig_move_since':    _sig_move_since,
                     'trade_plan':  trade_plan,
                     'liquidity':   liquidity,
                     'warmup':      _warmup,
@@ -3715,6 +4856,7 @@ if _show_scanner:
         _scan_duration = round(time.time() - scan_start, 1)
         _prog.progress(100, text=f"✅ Complete — {total} stocks in {_scan_duration}s · {len(raw_results)} results")
         _sym_ph.empty()
+        _live_ph.empty()   # clear live panel — shortlist takes over
         # Final sector momentum update
         st.session_state['sector_momentum'] = get_sector_momentum(raw_results)
 
@@ -3746,6 +4888,8 @@ if _show_scanner:
             _ctx_for_csv.get('state', 'UNKNOWN'),
             _ctx_for_csv.get('vix'),
         )
+        # ── Reset auto-refresh timer ──────────────────────
+        reset_refresh_timer()
         st.rerun()
 
     all_results = st.session_state.get('scan_results', [])
@@ -3842,178 +4986,6 @@ if _show_scanner:
 
     st.markdown(f"<div class='section-header'>⚡ Intraday Picks · {len(all_results)} results</div>", unsafe_allow_html=True)
 
-    # ── BREAKOUT SCREENER ─────────────────────────────────
-    # Runs fast ORB rules — catches moves before indicators warm up
-    # Best used 9:15–10:00 AM
-
-    _orb_expander_label = "🚀 Opening Range Breakout Screener"
-    _orb_results        = st.session_state.get('orb_results', [])
-    _orb_time           = st.session_state.get('orb_scan_time', '')
-
-    with st.expander(
-        f"{_orb_expander_label}"
-        f"{f' · ✅ {len(_orb_results)} breakouts found · {_orb_time}' if _orb_results else ' · Click to scan'}",
-        expanded=len(_orb_results) > 0
-    ):
-        # Context info
-        _now_ist  = ist_now()
-        _mins_open= 0
-        try:
-            _mkt_st   = _now_ist.replace(hour=9, minute=15, second=0, microsecond=0)
-            _mins_open= int((_now_ist - _mkt_st.astimezone(_now_ist.tzinfo)).total_seconds() / 60)
-        except Exception:
-            pass
-
-        if market_open() and _mins_open <= 75:
-            _orb_status_color = "#15803d"
-            _orb_status = f"🟢 ACTIVE — {_mins_open} min into session · Best window: 9:15–10:30 AM"
-        elif market_open():
-            _orb_status_color = "#d97706"
-            _orb_status = f"🟡 LATE — {_mins_open} min into session · Opening breakouts less reliable now"
-        else:
-            _orb_status_color = "#dc2626"
-            _orb_status = "🔴 Market closed · Run at 9:20 AM for best results"
-
-        st.markdown(f"""
-        <div style='background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;
-                    padding:10px 16px;margin-bottom:12px'>
-            <div style='font-size:12px;font-weight:700;color:{_orb_status_color}'>{_orb_status}</div>
-            <div style='font-size:11px;color:#64748b;margin-top:4px'>
-                Detects 5 patterns: Volume Explosion · Gap & Hold · VWAP Reclaim ·
-                ORB High Break · Momentum Burst — before RSI/MACD/Supertrend warm up
-            </div>
-        </div>""", unsafe_allow_html=True)
-
-        _ob1, _ob2 = st.columns([2, 1])
-        with _ob1:
-            _orb_universe = st.radio(
-                "Scan universe",
-                ["Current scan results", "Custom watchlist", "Full NSE 500"],
-                horizontal=True, key="orb_universe",
-                help="Current scan results is fastest — uses already-fetched data"
-            )
-        with _ob2:
-            _run_orb = st.button("🚀 Run Breakout Scan", key="run_orb_scan",
-                                  use_container_width=True, type="primary")
-
-        if _run_orb:
-            _orb_stocks = (
-                [r['symbol'] for r in all_results] if _orb_universe == "Current scan results"
-                else selected_stocks if _orb_universe == "Custom watchlist"
-                else POPULAR_STOCKS
-            )
-            _kite_orb = get_kite_client()
-            _port_orb = load_portfolio()
-
-            with st.spinner(f"🚀 Scanning {len(_orb_stocks)} stocks for breakouts..."):
-                _orb_results = run_breakout_screener(_orb_stocks, interval, _kite_orb, _port_orb)
-
-            st.session_state['orb_results']   = _orb_results
-            st.session_state['orb_scan_time'] = ist_now().strftime('%H:%M IST')
-            st.rerun()
-
-        # Show breakout results
-        if _orb_results:
-            st.markdown(f"<div class='section-header'>🚀 {len(_orb_results)} Breakouts Found</div>",
-                        unsafe_allow_html=True)
-
-            for _bo_r in _orb_results[:15]:
-                _best  = _bo_r['best']
-                _bc    = _best['color']
-                _bbg   = _best['bg']
-                _chg   = _bo_r['chg_pct']
-                _chgc  = "#16a34a" if _chg >= 0 else "#dc2626"
-
-                with st.container():
-                    _bc1, _bc2, _bc3 = st.columns([3, 3, 2])
-
-                    with _bc1:
-                        st.markdown(f"""
-                        <div style='background:{_bbg};border:2px solid {_bc}44;
-                                    border-radius:14px;padding:16px 18px'>
-                            <div style='display:flex;align-items:center;gap:10px'>
-                                <span style='font-size:24px'>{_best['icon']}</span>
-                                <div>
-                                    <div style='font-size:16px;font-weight:800;color:#1a2035'>
-                                        {_bo_r['sym_clean']}
-                                    </div>
-                                    <div style='font-size:11px;font-weight:700;color:{_bc}'>
-                                        {_best['title']}
-                                    </div>
-                                </div>
-                            </div>
-                            <div style='display:flex;justify-content:space-between;
-                                        margin-top:12px;flex-wrap:wrap;gap:8px'>
-                                <div style='text-align:center'>
-                                    <div style='font-size:10px;color:#94a3b8;font-weight:700'>PRICE</div>
-                                    <div style='font-size:18px;font-weight:800;color:#1a2035;
-                                                font-family:JetBrains Mono'>₹{_bo_r["price"]:,.2f}</div>
-                                </div>
-                                <div style='text-align:center'>
-                                    <div style='font-size:10px;color:#94a3b8;font-weight:700'>CHANGE</div>
-                                    <div style='font-size:18px;font-weight:800;color:{_chgc};
-                                                font-family:JetBrains Mono'>{_chg:+.2f}%</div>
-                                </div>
-                                <div style='text-align:center'>
-                                    <div style='font-size:10px;color:#94a3b8;font-weight:700'>VOLUME</div>
-                                    <div style='font-size:18px;font-weight:800;color:#d97706;
-                                                font-family:JetBrains Mono'>{_bo_r["vol_ratio"]}×</div>
-                                </div>
-                                <div style='text-align:center'>
-                                    <div style='font-size:10px;color:#94a3b8;font-weight:700'>SCORE</div>
-                                    <div style='font-size:18px;font-weight:800;color:{_bc};
-                                                font-family:JetBrains Mono'>{_best["score"]}</div>
-                                </div>
-                            </div>
-                        </div>""", unsafe_allow_html=True)
-
-                    with _bc2:
-                        # Show all patterns found
-                        for _pat in _bo_r['breakouts']:
-                            _pc = _pat['color']
-                            _pbg = _pat['bg']
-                            st.markdown(f"""
-                            <div style='background:{_pbg};border-left:4px solid {_pc};
-                                        border-radius:0 8px 8px 0;padding:8px 12px;
-                                        margin-bottom:6px'>
-                                <div style='font-size:12px;font-weight:700;color:{_pc}'>
-                                    {_pat['icon']} {_pat['title']}
-                                </div>
-                                <div style='font-size:11px;color:#374151;margin-top:3px;
-                                            line-height:1.4'>
-                                    {_pat['msg'][_pat['msg'].find('|')+2:] if '|' in _pat['msg'] else _pat['msg']}
-                                </div>
-                            </div>""", unsafe_allow_html=True)
-
-                    with _bc3:
-                        st.markdown(f"""
-                        <div style='background:#1a2035;border-radius:12px;padding:14px 16px;
-                                    height:100%;display:flex;flex-direction:column;justify-content:space-between'>
-                            <div>
-                                <div style='font-size:10px;font-weight:700;color:#f59e0b;
-                                            letter-spacing:1px;text-transform:uppercase'>Action</div>
-                                <div style='font-size:12px;color:#e2e8f0;margin-top:6px;
-                                            line-height:1.5'>{_best['action']}</div>
-                            </div>
-                            <div style='font-size:10px;color:#475569;margin-top:8px'>
-                                Source: {"⚡ Kite" if _bo_r.get("src")=="kite" else "⏳ yfinance"}
-                            </div>
-                        </div>""", unsafe_allow_html=True)
-                        if st.button(f"Analyse {_bo_r['sym_clean']}", key=f"orb_analyse_{_bo_r['sym_clean']}",
-                                     use_container_width=True):
-                            st.session_state['_focus_stock'] = _bo_r['sym_clean']
-                            st.rerun()
-
-                    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
-
-        elif _run_orb:
-            st.info("No breakout patterns found. Market may be slow or data unavailable.")
-        else:
-            st.markdown("""
-            <div style='text-align:center;padding:20px;color:#94a3b8;font-size:13px'>
-                Click <b>🚀 Run Breakout Scan</b> above to detect opening breakouts
-            </div>""", unsafe_allow_html=True)
-
     # ── Stock results — LAZY RENDER (only selected stock) ──────────
     # st.tabs renders ALL content for ALL tabs upfront — very slow.
     # Instead we use a compact summary table + single stock selectbox.
@@ -4037,14 +5009,17 @@ if _show_scanner:
             </span>
         </div>
         <div style='font-size:13px;color:rgba(255,255,255,0.6);margin-top:4px'>
-            Stocks that pass ALL 5 filters — Score ≥ 65 · VWAP Above ·
-            Volume ≥ 1.5× · Liquidity Excellent/High · RS Positive
+            Stocks that pass ALL 10 filters — Score ≥ 75 · VWAP Above ·
+            Volume ≥ 2.5× · Liquidity Excellent · RS > −0.5% · Signal Fresh · R:R ≥ 1.5
         </div>
     </div>""", unsafe_allow_html=True)
 
     # ── Apply all 5 filters ────────────────────────────────
     _shortlist = []
     _reject_reasons = {}
+
+    # ── Nifty state for filter 7 ──────────────────────────
+    _nifty_st = st.session_state.get('nifty_market_state', 'UNKNOWN')
 
     for _r in all_results:
         _sym    = _r['symbol'].replace('.NS','')
@@ -4058,59 +5033,91 @@ if _show_scanner:
         _iv     = _r.get('interval', '1minute')
         _cpd    = CANDLES_PER_DAY.get(_iv, 375)
         _verd   = _r.get('_verdict', '')
+        _rsi    = _r.get('rsi', 50) or 50
+        _sig_age= _r.get('sig_age_candles', 0)
+        _tp     = _r.get('trade_plan') or {}
+        _price  = _r.get('price', 0) or 0
+        _sl_px  = _f(_tp.get('stop_loss', 0))
+        _t1_px  = _f(_tp.get('t1', 0))
+        _rr     = 0.0
+        _sl_dist= 99.0
+        if _price > 0 and _sl_px > 0 and _t1_px > 0:
+            _risk_d  = _price - _sl_px
+            _rew_d   = _t1_px - _price
+            _rr      = round(_rew_d / _risk_d, 2) if _risk_d > 0 else 0
+            _sl_dist = round(_risk_d / _price * 100, 2)
 
-        # Skip WARMING_UP always
-        # Skip PARTIAL only for fast timeframes (1min/3min) — not for 15min/60min
-        # 60min: PARTIAL = 2+ candles = 2 hours of data = enough to trade
+        # Skip warming up / partial
         if _wu == 'WARMING_UP':
             continue
-        if _wu == 'PARTIAL' and _cpd >= 75:   # 75+ cpd = 1min or 3min
+        if _wu == 'PARTIAL' and _cpd >= 75:
             continue
 
-        # Filter 1 — Score ≥ 65
-        if _score < 65:
-            _reject_reasons[_sym] = f'Score {_score} < 65'
+        # ── Filter 1 — Score >= 75 (raised from 65) ───────
+        if _score < 75:
+            _reject_reasons[_sym] = f'Score {_score} < 75'
             continue
 
-        # Filter 2 — VWAP Above
+        # ── Filter 2 — VWAP Above ─────────────────────────
         if _vwap != 'ABOVE':
             _reject_reasons[_sym] = 'VWAP Below'
             continue
 
-        # Filter 3 — Volume threshold (interval-aware)
-        # 1min/3min: need 1.5× (intraday momentum)
-        # 5min/15min: need 1.3× (slightly lower — candles aggregate more)
-        # 60min: need 1.2× (hourly candles rarely spike 1.5×)
-        _vol_threshold = (1.2 if _cpd <= 10 else (1.3 if _cpd <= 25 else 1.5))
+        # ── Filter 3 — Volume >= 2.5x (raised from 1.5x) ──
+        _vol_threshold = (1.5 if _cpd <= 10 else (2.0 if _cpd <= 25 else 2.5))
         if _vol < _vol_threshold:
-            _reject_reasons[_sym] = f'Vol {_vol:.1f}× < {_vol_threshold}×'
+            _reject_reasons[_sym] = f'Vol {_vol:.1f}x < {_vol_threshold}x'
             continue
 
-        # Filter 4 — Liquidity EXCELLENT or HIGH
-        if _liq not in ['EXCELLENT', 'HIGH']:
-            _reject_reasons[_sym] = f'Liquidity {_liq}'
+        # ── Filter 4 — Liquidity EXCELLENT only ───────────
+        if _liq != 'EXCELLENT':
+            _reject_reasons[_sym] = f'Liquidity {_liq} (need EXCELLENT)'
             continue
 
-        # Filter 5 — RS Positive
-        if _rs < 0:
-            _reject_reasons[_sym] = f'RS {_rs:.1f}% negative'
+        # ── Filter 5 — RS not severely underperforming ────
+        # RS already scored in pick score (+15 to -15 pts)
+        # Hard filter only rejects stocks significantly lagging Nifty
+        # On bull days RS=0% is fine — stock moving with market
+        if _rs < -0.5:
+            _reject_reasons[_sym] = f'RS {_rs:.1f}% severely underperforming Nifty'
             continue
 
-        # ── Passed all 5 filters ──
-        # Bonus check: CPR narrow = +1 confidence star
-        _cpr_ok = _cpr_w is not None and _cpr_w < 0.6
+        # ── Filter 6 — Signal age <= 3 candles ────────────
+        if _sig_age > 3:
+            _reject_reasons[_sym] = f'Signal {_sig_age} candles old (stale)'
+            continue
 
-        # MTF alignment from session state if available
-        _mtf_key  = f"mtf_{_r['symbol']}_{interval}"
-        _mtf_data = st.session_state.get(_mtf_key, {})
-        _align    = _mtf_data.get('alignment', 'UNKNOWN')
+        # ── Filter 7 — Nifty not BEAR ─────────────────────
+        if _nifty_st == 'BEAR':
+            _reject_reasons[_sym] = 'Nifty BEAR — no longs today'
+            continue
+
+        # ── Filter 8 — RSI not overbought (< 72) ──────────
+        if _rsi > 72:
+            _reject_reasons[_sym] = f'RSI {_rsi:.0f} overbought (> 72)'
+            continue
+
+        # ── Filter 9 — SL within 1.5% of entry ───────────
+        if _sl_dist > 1.5:
+            _reject_reasons[_sym] = f'SL {_sl_dist:.1f}% away (> 1.5%)'
+            continue
+
+        # ── Filter 10 — R:R >= 1.5 ────────────────────────
+        if _rr > 0 and _rr < 1.5:
+            _reject_reasons[_sym] = f'R:R {_rr:.1f} < 1.5'
+            continue
+
+        # ── Passed all 10 filters ─────────────────────────
+        _cpr_ok  = _cpr_w is not None and _cpr_w < 0.6
+        _mtf_key = f"mtf_{_r['symbol']}_{interval}"
+        _align   = st.session_state.get(_mtf_key, {}).get('alignment', 'UNKNOWN')
 
         _shortlist.append({
             'result':    _r,
             'sym':       _sym,
             'score':     _score,
             'verdict':   _verd,
-            'price':     _r.get('price', 0),
+            'price':     _price,
             'chg_pct':   _r.get('change_pct', 0),
             'vol':       _vol,
             'rs':        _rs,
@@ -4118,12 +5125,23 @@ if _show_scanner:
             'vwap':      _vwap,
             'cpr_ok':    _cpr_ok,
             'cpr_w':     _cpr_w,
-            'rsi':       _r.get('rsi', 50),
+            'rsi':       _rsi,
             'mtf_align': _align,
             'alerts':    _r.get('_alerts', []),
+            'sig_age':   _sig_age,
+            'sig_move':  _r.get('sig_move_since', 0.0),
+            'sig_price': _r.get('sig_price_at_fire', _price),
+            'entry':     _price,
+            'sl':        _sl_px,
+            't1':        _t1_px,
+            't2':        _f(_tp.get('t2', 0)),
+            'qty':       int(_f(_tp.get('qty', 0))),
+            'rr':        _rr,
+            'sl_dist':   _sl_dist,
+            'investment':_f(_tp.get('investment', 0)),
+            'risk_amt':  _f(_tp.get('risk_amount', 0)),
         })
 
-    # Sort by score descending
     _shortlist.sort(key=lambda x: x['score'], reverse=True)
 
     # ── Show shortlist results ─────────────────────────────
@@ -4132,24 +5150,24 @@ if _show_scanner:
         _tm2      = _now_ist2.hour * 60 + _now_ist2.minute
         _reason   = (
             "Market opened less than 20 min ago — wait until 9:35 AM" if _tm2 < 575 else
-            "VIX is HIGH/EXTREME — filters are strict today" if st.session_state.get('nifty_context',{}).get('vix_level') in ['HIGH','EXTREME'] else
-            "Nifty is in BEAR state — most stocks failing VWAP/RS filters" if st.session_state.get('nifty_market_state') == 'BEAR' else
-            "No stocks passed all 5 filters — do not force a trade today"
+            "VIX is EXTREME/CRISIS — signals capped today" if st.session_state.get('nifty_context',{}).get('vix_level') in ['HIGH','EXTREME','CRISIS'] else
+            "Nifty is BEAR — no long entries today" if st.session_state.get('nifty_market_state') == 'BEAR' else
+            "No stocks passed all 10 precision filters — do not force a trade today"
         )
         st.markdown(f"""
         <div style='background:#1a2035;border:2px solid #374151;border-radius:14px;
                     padding:24px;text-align:center;margin-bottom:16px'>
             <div style='font-size:32px;margin-bottom:10px'>🔍</div>
             <div style='font-size:17px;font-weight:800;color:#ffffff;margin-bottom:8px'>
-                No stocks passed all 5 filters
+                No stocks passed all 10 precision filters
             </div>
             <div style='font-size:13px;color:#f59e0b;font-weight:600;margin-bottom:16px'>
                 {_reason}
             </div>
             <div style='font-size:12px;color:rgba(255,255,255,0.5);line-height:1.8'>
                 ✅ This is the correct outcome — <b style='color:#34d399'>do not trade today</b><br>
-                Forcing trades when filters fail = guaranteed losses<br>
-                Come back tomorrow or wait for afternoon session
+                0 signals = no trade. Forcing trades when filters fail = guaranteed losses.<br>
+                Wait for next scan cycle or tomorrow's session.
             </div>
         </div>""", unsafe_allow_html=True)
 
@@ -4165,123 +5183,162 @@ if _show_scanner:
             f"<div style='display:flex;justify-content:space-between;align-items:center;"
             f"padding:6px 0;margin-bottom:8px'>"
             f"<span style='font-size:13px;font-weight:700;color:#1a2035'>"
-            f"✅ {len(_shortlist)} stock{'s' if len(_shortlist)>1 else ''} passed all filters</span>"
+            f"✅ {len(_shortlist)} stock{'s' if len(_shortlist)>1 else ''} passed all 10 filters — buy without review</span>"
             f"<span style='font-size:12px;color:#64748b'>{_time_msg}</span>"
             f"</div>", unsafe_allow_html=True)
 
         # Stock cards
         for _rank, _sl in enumerate(_shortlist[:5], 1):
-            _chg_clr  = "#16a34a" if _sl['chg_pct'] >= 0 else "#dc2626"
-            _rs_clr   = "#16a34a" if _sl['rs'] >= 0 else "#dc2626"
-            _vd       = _sl['verdict']
-            _vd_bg    = {"⭐⭐⭐ STRONG BUY":"#dcfce7","⭐⭐ BUY":"#dbeafe"}.get(_vd,"#f8fafc")
-            _vd_clr   = {"⭐⭐⭐ STRONG BUY":"#15803d","⭐⭐ BUY":"#1d4ed8"}.get(_vd,"#64748b")
+            _chg_clr = "#16a34a" if _sl['chg_pct'] >= 0 else "#dc2626"
+            _rs_clr  = "#16a34a" if _sl['rs'] >= 0 else "#dc2626"
+            _vd      = _sl['verdict']
+            _vd_bg   = {"⭐⭐⭐ STRONG BUY":"#dcfce7","⭐⭐ BUY":"#dbeafe"}.get(_vd,"#f8fafc")
+            _vd_clr  = {"⭐⭐⭐ STRONG BUY":"#15803d","⭐⭐ BUY":"#1d4ed8"}.get(_vd,"#64748b")
 
-            # MTF badge
-            _mtf_badge = ""
-            if _sl['mtf_align'] in ['STRONG_BULL','BULL']:
-                _mtf_badge = "<span style='background:#dcfce7;color:#15803d;font-size:10px;font-weight:700;border-radius:6px;padding:2px 8px'>⏱ MTF BULL</span>"
-            elif _sl['mtf_align'] == 'CONFLICTING':
-                _mtf_badge = "<span style='background:#fef3c7;color:#92400e;font-size:10px;font-weight:700;border-radius:6px;padding:2px 8px'>⏱ CONFLICTING</span>"
+            # Signal freshness
+            _sig_age  = _sl.get('sig_age', 0)
+            _sig_move = _sl.get('sig_move', 0.0)
+            if _sig_age == 0:
+                _fresh_badge = "<span style='background:#dcfce7;color:#15803d;font-size:10px;font-weight:700;border-radius:4px;padding:2px 8px'>🟢 Just fired</span>"
+            elif _sig_age <= 2:
+                _fresh_badge = f"<span style='background:#dcfce7;color:#15803d;font-size:10px;font-weight:700;border-radius:4px;padding:2px 8px'>🟢 {_sig_age}c ago · Fresh</span>"
+            else:
+                _fresh_badge = f"<span style='background:#fef3c7;color:#92400e;font-size:10px;font-weight:700;border-radius:4px;padding:2px 8px'>🟡 {_sig_age}c ago · +{_sig_move:.1f}%</span>"
 
-            # CPR badge
-            _cpr_badge = ""
-            if _sl['cpr_ok']:
-                _cpr_badge = "<span style='background:#f0f9ff;color:#0369a1;font-size:10px;font-weight:700;border-radius:6px;padding:2px 8px'>⚡ NARROW CPR</span>"
+            # Trade values
+            _entry  = _sl.get('entry', 0)
+            _sl_px  = _sl.get('sl', 0)
+            _t1     = _sl.get('t1', 0)
+            _t2     = _sl.get('t2', 0)
+            _qty    = _sl.get('qty', 0)
+            _rr     = _sl.get('rr', 0)
+            _sl_d   = _sl.get('sl_dist', 0)
+            _inv    = _sl.get('investment', 0)
+            _risk   = _sl.get('risk_amt', 0)
+            _sl_pct = round((_entry - _sl_px) / _entry * 100, 2) if _entry > 0 else 0
+            _t1_pct = round((_t1 - _entry) / _entry * 100, 2)    if _entry > 0 else 0
+            _t2_pct = round((_t2 - _entry) / _entry * 100, 2)    if _entry > 0 else 0
 
-            # Alert badges
-            _alert_types = set(a['type'] for a in _sl['alerts'])
-            _alert_badge = ""
-            if 'STRONG_BUY' in _alert_types:
-                _alert_badge = "<span style='background:#dcfce7;color:#15803d;font-size:10px;font-weight:700;border-radius:6px;padding:2px 8px'>🚨 STRONG BUY ALERT</span>"
-            elif 'BUY' in _alert_types:
-                _alert_badge = "<span style='background:#dcfce7;color:#15803d;font-size:10px;font-weight:700;border-radius:6px;padding:2px 8px'>🔔 BUY ALERT</span>"
+            # Rank badge colour
+            _rb = {1:"#f59e0b",2:"#94a3b8",3:"#b45309"}.get(_rank,"#e2e8f0")
+            _rt = {1:"#1a2035",2:"#ffffff",3:"#ffffff"}.get(_rank,"#64748b")
 
-            # Rank colour
-            _rank_bg = {1:"#f59e0b",2:"#94a3b8",3:"#b45309"}.get(_rank,"#e2e8f0")
-            _rank_tc = {1:"#1a2035",2:"#ffffff",3:"#ffffff"}.get(_rank,"#64748b")
+            st.markdown(f"""
+            <div style='background:#ffffff;border:2px solid {_vd_clr}33;
+                        border-radius:16px;padding:18px 20px;margin-bottom:12px;
+                        box-shadow:0 2px 12px rgba(0,0,0,0.06)'>
 
-            _sc1, _sc2 = st.columns([5, 1])
-            with _sc1:
-                st.markdown(f"""
-                <div style='background:#ffffff;border:1.5px solid #e8ecf3;border-radius:14px;
-                            padding:16px 18px;margin-bottom:8px;
-                            box-shadow:0 2px 8px rgba(0,0,0,0.04)'>
-                    <div style='display:flex;align-items:flex-start;
-                                justify-content:space-between;flex-wrap:wrap;gap:8px'>
-                        <div style='display:flex;align-items:center;gap:12px'>
-                            <div style='background:{_rank_bg};color:{_rank_tc};
-                                        width:32px;height:32px;border-radius:50%;
-                                        display:flex;align-items:center;justify-content:center;
-                                        font-size:14px;font-weight:800;flex-shrink:0'>
-                                {_rank}
+                <!-- Header row -->
+                <div style='display:flex;align-items:flex-start;
+                            justify-content:space-between;flex-wrap:wrap;gap:8px'>
+                    <div style='display:flex;align-items:center;gap:12px'>
+                        <div style='background:{_rb};color:{_rt};width:34px;height:34px;
+                                    border-radius:50%;display:flex;align-items:center;
+                                    justify-content:center;font-size:15px;
+                                    font-weight:800;flex-shrink:0'>{_rank}</div>
+                        <div>
+                            <div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'>
+                                <span style='font-size:22px;font-weight:800;color:#1a2035'>{_sl["sym"]}</span>
+                                <span style='background:{_vd_bg};color:{_vd_clr};
+                                             font-size:11px;font-weight:700;
+                                             border-radius:6px;padding:3px 10px'>{_vd}</span>
+                                {_fresh_badge}
                             </div>
-                            <div>
-                                <div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'>
-                                    <span style='font-size:18px;font-weight:800;color:#1a2035'>
-                                        {_sl['sym']}
-                                    </span>
-                                    <span style='background:{_vd_bg};color:{_vd_clr};
-                                                 font-size:11px;font-weight:700;
-                                                 border-radius:6px;padding:2px 10px'>
-                                        {_vd}
-                                    </span>
-                                    {_mtf_badge} {_cpr_badge} {_alert_badge}
-                                </div>
-                                <div style='font-size:12px;color:#64748b;margin-top:4px'>
-                                    Score <b style='color:#1a2035'>{_sl['score']}/100</b>
-                                    &nbsp;·&nbsp; RSI {_sl['rsi']:.0f}
-                                    &nbsp;·&nbsp; Vol <b>{_sl['vol']:.1f}×</b>
-                                    &nbsp;·&nbsp; {_sl['liq']}
-                                </div>
-                            </div>
-                        </div>
-                        <div style='text-align:right'>
-                            <div style='font-size:20px;font-weight:800;color:#1a2035;
-                                        font-family:JetBrains Mono'>
-                                ₹{_sl['price']:,.2f}
-                            </div>
-                            <div style='font-size:12px;font-weight:700;color:{_chg_clr}'>
-                                {'+' if _sl['chg_pct']>=0 else ''}{_sl['chg_pct']:.2f}%
-                                &nbsp;·&nbsp;
-                                <span style='color:{_rs_clr}'>
-                                    RS {'+' if _sl['rs']>=0 else ''}{_sl['rs']:.1f}%
-                                </span>
+                            <div style='font-size:12px;color:#64748b;margin-top:4px'>
+                                Score <b style='color:#1a2035'>{_sl["score"]}/100</b>
+                                &nbsp;·&nbsp; RSI {_sl["rsi"]:.0f}
+                                &nbsp;·&nbsp; Vol {_sl["vol"]:.1f}×
+                                &nbsp;·&nbsp; RS <span style='color:{_rs_clr}'>{_sl["rs"]:+.1f}%</span>
                             </div>
                         </div>
                     </div>
-
-                    <!-- 5 filter status badges -->
-                    <div style='display:flex;gap:6px;margin-top:12px;flex-wrap:wrap'>
-                        <span style='background:#dcfce7;color:#15803d;font-size:10px;
-                                     font-weight:700;border-radius:4px;padding:3px 8px'>
-                            ✅ Score {_sl['score']}
-                        </span>
-                        <span style='background:#dcfce7;color:#15803d;font-size:10px;
-                                     font-weight:700;border-radius:4px;padding:3px 8px'>
-                            ✅ VWAP Above
-                        </span>
-                        <span style='background:#dcfce7;color:#15803d;font-size:10px;
-                                     font-weight:700;border-radius:4px;padding:3px 8px'>
-                            ✅ Vol {_sl['vol']:.1f}×
-                        </span>
-                        <span style='background:#dcfce7;color:#15803d;font-size:10px;
-                                     font-weight:700;border-radius:4px;padding:3px 8px'>
-                            ✅ {_sl['liq']}
-                        </span>
-                        <span style='background:#dcfce7;color:#15803d;font-size:10px;
-                                     font-weight:700;border-radius:4px;padding:3px 8px'>
-                            ✅ RS +{_sl['rs']:.1f}%
-                        </span>
-                        {"<span style='background:#f0f9ff;color:#0369a1;font-size:10px;font-weight:700;border-radius:4px;padding:3px 8px'>⚡ Narrow CPR</span>" if _sl['cpr_ok'] else "<span style='background:#fef3c7;color:#92400e;font-size:10px;font-weight:700;border-radius:4px;padding:3px 8px'>〰 Moderate CPR</span>"}
+                    <div style='text-align:right'>
+                        <div style='font-size:24px;font-weight:800;color:#1a2035;
+                                    font-family:JetBrains Mono'>₹{_entry:,.2f}</div>
+                        <div style='font-size:13px;font-weight:700;color:{_chg_clr}'>
+                            {_sl["chg_pct"]:+.2f}% today
+                        </div>
                     </div>
-                </div>""", unsafe_allow_html=True)
+                </div>
 
-            with _sc2:
-                st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
-                if st.button(f"🔬 Analyse", key=f"shortlist_analyse_{_sl['sym']}",
-                             use_container_width=True, type="primary"):
-                    st.session_state['_focus_stock'] = _sl['sym']
+                <!-- Trade plan — the key info -->
+                <div style='display:flex;gap:8px;margin-top:14px;flex-wrap:wrap'>
+                    <div style='background:#f0fdf4;border:1px solid #bbf7d0;
+                                border-radius:10px;padding:10px 14px;flex:1;min-width:90px;text-align:center'>
+                        <div style='font-size:9px;font-weight:700;color:#15803d;letter-spacing:1px'>ENTRY</div>
+                        <div style='font-size:18px;font-weight:800;color:#15803d;
+                                    font-family:JetBrains Mono;margin:3px 0'>₹{_entry:,.2f}</div>
+                        <div style='font-size:10px;color:#15803d'>{_qty} shares · ₹{_inv:,.0f}</div>
+                    </div>
+                    <div style='background:#fff5f5;border:1px solid #fecaca;
+                                border-radius:10px;padding:10px 14px;flex:1;min-width:90px;text-align:center'>
+                        <div style='font-size:9px;font-weight:700;color:#dc2626;letter-spacing:1px'>STOP LOSS</div>
+                        <div style='font-size:18px;font-weight:800;color:#dc2626;
+                                    font-family:JetBrains Mono;margin:3px 0'>₹{_sl_px:,.2f}</div>
+                        <div style='font-size:10px;color:#dc2626'>−{_sl_d:.1f}% · Risk ₹{_risk:,.0f}</div>
+                    </div>
+                    <div style='background:#eff6ff;border:1px solid #bfdbfe;
+                                border-radius:10px;padding:10px 14px;flex:1;min-width:90px;text-align:center'>
+                        <div style='font-size:9px;font-weight:700;color:#1d4ed8;letter-spacing:1px'>T1 TARGET</div>
+                        <div style='font-size:18px;font-weight:800;color:#1d4ed8;
+                                    font-family:JetBrains Mono;margin:3px 0'>₹{_t1:,.2f}</div>
+                        <div style='font-size:10px;color:#1d4ed8'>+{_t1_pct:.1f}%</div>
+                    </div>
+                    <div style='background:#f5f3ff;border:1px solid #ddd6fe;
+                                border-radius:10px;padding:10px 14px;flex:1;min-width:90px;text-align:center'>
+                        <div style='font-size:9px;font-weight:700;color:#7c3aed;letter-spacing:1px'>T2 TARGET</div>
+                        <div style='font-size:18px;font-weight:800;color:#7c3aed;
+                                    font-family:JetBrains Mono;margin:3px 0'>₹{_t2:,.2f}</div>
+                        <div style='font-size:10px;color:#7c3aed'>+{_t2_pct:.1f}% · R:R {_rr:.1f}</div>
+                    </div>
+                </div>
+            </div>""", unsafe_allow_html=True)
+
+            # One-click paper buy button — full width, prominent
+            _pb_key = f"sl_paper_buy_{_sl['sym']}_{_rank}"
+            if st.button(
+                f"✅ Paper Buy  {_sl['sym']}  ·  Entry ₹{_entry:,.2f}  ·  SL ₹{_sl_px:,.2f}  ·  T1 ₹{_t1:,.2f}  ·  Qty {_qty}",
+                key=_pb_key,
+                use_container_width=True,
+                type="primary",
+            ):
+                _port = load_portfolio()
+                # Check if already have open position in this stock
+                _already_open = any(
+                    p.get('symbol') == _sl['sym'] and p.get('status') == 'OPEN'
+                    for p in _port
+                )
+                if _already_open:
+                    st.warning(f"⚠️ Already have an open position in {_sl['sym']} — skipping")
+                else:
+                    _new_pos = {
+                        'symbol':      _sl['sym'],
+                        'status':      'OPEN',
+                        'entry':       round(_entry, 2),
+                        'qty':         _qty,
+                        'stop_loss':   round(_sl_px, 2),
+                        't1':          round(_t1, 2),
+                        't2':          round(_t2, 2),
+                        't3':          round(_sl.get('result',{}).get('trade_plan',{}).get('t3',0) or 0, 2),
+                        't4':          round(_sl.get('result',{}).get('trade_plan',{}).get('t4',0) or 0, 2),
+                        'investment':  round(_inv, 2),
+                        'actual_cost': round(_inv, 2),
+                        'timeframe':   interval,
+                        'date':        ist_now().strftime('%d %b %Y %H:%M'),
+                        'score':       _sl['score'],
+                        'verdict':     _vd,
+                        'sig_age':     _sig_age,
+                        'rs_vs_nifty': _sl['rs'],
+                        'vol_ratio':   _sl['vol'],
+                        'source':      'shortlist_quick_buy',
+                    }
+                    _port.append(_new_pos)
+                    save_portfolio(_port)
+                    st.session_state['paper_portfolio'] = _port
+                    st.success(
+                        f"✅ Paper bought {_qty} shares of {_sl['sym']} @ ₹{_entry:,.2f} · "
+                        f"SL ₹{_sl_px:,.2f} · T1 ₹{_t1:,.2f} · Risk ₹{_risk:,.0f}"
+                    )
                     st.rerun()
 
         # Show count of rejected stocks
@@ -5058,8 +6115,14 @@ if _show_scanner:
         st.markdown("<div class='section-header'>🌐 Market Context</div>", unsafe_allow_html=True)
         _mx1, _mx2, _mx3 = st.columns(3)
 
-        _vix_clr = {'CALM':'#16a34a','NORMAL':'#16a34a','ELEVATED':'#d97706',
-                    'HIGH':'#dc2626','EXTREME':'#7f1d1d'}.get(_vix_level2, '#64748b')
+        _vix_clr = {
+            'CALM':    '#16a34a',
+            'NORMAL':  '#16a34a',
+            'ELEVATED':'#d97706',
+            'HIGH':    '#ea580c',
+            'EXTREME': '#dc2626',
+            'CRISIS':  '#7f1d1d',
+        }.get(_vix_level2, '#64748b')
         with _mx1:
             st.markdown(
                 f"<div style='background:{_vix_clr}22;border:1px solid {_vix_clr}44;"
@@ -5528,7 +6591,16 @@ if _show_scanner:
             entry      = _f(p.get('entry', 0))
             qty        = int(_f(p.get('qty', 0)))
             actual_cost= _f(p.get('actual_cost', 0)) or 1
-            cur_price  = _live_px if is_open else _f(p.get('exit_price', entry))
+
+            # ── Bug fix: closed positions MUST use exit_price, not live price ──
+            if is_open:
+                cur_price  = _live_px
+                price_label = "Live Price"
+            else:
+                _exit_px   = p.get('exit_price')
+                cur_price  = _f(_exit_px) if _exit_px is not None else entry
+                price_label = "Exit Price"
+
             unreal_pl  = (cur_price - entry) * qty
             unreal_pct = (unreal_pl / actual_cost) * 100
             pl_color   = "#16a34a" if unreal_pl >= 0 else "#dc2626"
@@ -5536,22 +6608,40 @@ if _show_scanner:
             status_lbl = "OPEN" if is_open else "CLOSED"
             status_col = "#16a34a" if is_open else "#64748b"
 
+            # ── SL hit detection (only for OPEN positions) ──
+            # Define sl first so _sl_hit_now can use it
+            _sl_early = _f(p.get('stop_loss', 0))
+            _sl_hit_now = is_open and _sl_early > 0 and cur_price <= _sl_early
+
             # Target hit highlights
             t1 = _f(p.get('t1', 0)); t2 = _f(p.get('t2', 0))
             t3 = _f(p.get('t3', 0)); t4 = _f(p.get('t4', 0))
-            sl = _f(p.get('stop_loss', 0))
+            sl = _sl_early
 
             def _target_style(tval):
                 if tval <= 0: return "#f8fafc", "#94a3b8"
                 if cur_price >= tval: return "#dcfce7", "#15803d"  # hit
                 return "#f0fdf4", "#16a34a"                         # pending
 
-            sl_bg = "#fef2f2" if cur_price <= sl and sl > 0 else "#fff5f5"
+            sl_bg = "#fef2f2" if _sl_hit_now else "#fff5f5"
             sl_tc = "#dc2626"
 
+            # ── SL Hit urgent banner (OPEN positions only) ──
+            if _sl_hit_now:
+                st.markdown(
+                    f"<div style='background:#7f1d1d;border:2px solid #dc2626;"
+                    f"border-radius:12px;padding:12px 18px;margin-bottom:8px;"
+                    f"animation:pulse 1s infinite'>"
+                    f"<div style='font-size:15px;font-weight:800;color:#fca5a5'>"
+                    f"🛑 STOP LOSS HIT — EXIT {sym_clean} IMMEDIATELY</div>"
+                    f"<div style='font-size:12px;color:#fca5a5;margin-top:4px'>"
+                    f"Current ₹{cur_price:,.2f} · SL was ₹{sl:,.2f} · "
+                    f"Loss: ₹{abs(unreal_pl):,.0f} · Click Square Off now</div>"
+                    f"</div>", unsafe_allow_html=True)
+
             st.markdown(f"""
-            <div style='background:#ffffff;border:1.5px solid #e8ecf3;border-radius:16px;
-                        padding:18px 20px;margin-bottom:10px;
+            <div style='background:#ffffff;border:1.5px solid {"#dc2626" if _sl_hit_now else "#e8ecf3"};
+                        border-radius:16px;padding:18px 20px;margin-bottom:10px;
                         box-shadow:0 2px 8px rgba(0,0,0,0.04)'>
 
                 <!-- Header row -->
@@ -5569,7 +6659,7 @@ if _show_scanner:
                         </div>
                     </div>
                     <div style='text-align:right'>
-                        <div style='font-size:11px;color:#94a3b8'>Live Price</div>
+                        <div style='font-size:11px;color:#94a3b8'>{price_label}</div>
                         <div style='font-size:22px;font-weight:800;color:#1a2035;
                                     font-family:JetBrains Mono'>₹{cur_price:,.2f}</div>
                         <div style='font-size:14px;font-weight:800;color:{pl_color}'>
@@ -5584,7 +6674,7 @@ if _show_scanner:
                         <div style='font-size:9px;font-weight:700;color:{sl_tc};letter-spacing:1px'>STOP LOSS</div>
                         <div style='font-size:14px;font-weight:800;color:{sl_tc};font-family:JetBrains Mono'>₹{sl:,.2f}</div>
                         <div style='font-size:9px;color:{sl_tc};margin-top:2px'>
-                            {"🚨 HIT" if cur_price <= sl and sl > 0 else f"{((cur_price-sl)/entry*100):+.1f}%"}
+                            {"🚨 HIT" if _sl_hit_now else f"{((cur_price-sl)/entry*100):+.1f}%"}
                         </div>
                     </div>
                     {"".join([f"""
@@ -5600,9 +6690,1080 @@ if _show_scanner:
 
 
 
+
 # ─────────────────────────────────────────────
-#  PORTFOLIO PAGE
+#  EARLY MOVERS PAGE
+#  Catches gap-up stocks in first 10 minutes
+#  No indicators needed — pure price + volume
 # ─────────────────────────────────────────────
+
+# ─────────────────────────────────────────────
+#  ORB SCANNER PAGE
+#  Opening Range Breakout — standalone page
+# ─────────────────────────────────────────────
+if _show_orb:
+
+    st.markdown("""
+    <div class='topbar'>
+        <div>
+            <div class='topbar-title'>🔓 Opening Range Breakout Scanner</div>
+            <div class='topbar-subtitle'>
+                Catches stocks that break above their first-candle high ·
+                5 breakout rules · Best used 9:20 AM – 10:30 AM
+            </div>
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+    # ── What is ORB explanation ───────────────────────────
+    st.markdown("""
+    <div style='display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap'>
+        <div style='flex:1;min-width:160px;background:#f5f3ff;border-radius:10px;
+                    padding:12px 14px;border:1px solid #c4b5fd44'>
+            <div style='font-size:18px;margin-bottom:6px'>📐</div>
+            <div style='font-size:12px;font-weight:700;color:#7c3aed'>Opening Range</div>
+            <div style='font-size:11px;color:#6d28d9;margin-top:3px'>
+                High and Low of the first candle (9:15 AM).<br>
+                This becomes the range to break.
+            </div>
+        </div>
+        <div style='flex:1;min-width:160px;background:#fffbeb;border-radius:10px;
+                    padding:12px 14px;border:1px solid #fbbf2444'>
+            <div style='font-size:18px;margin-bottom:6px'>🔓</div>
+            <div style='font-size:12px;font-weight:700;color:#d97706'>Breakout</div>
+            <div style='font-size:11px;color:#b45309;margin-top:3px'>
+                Price breaks ABOVE the first candle high<br>
+                with volume confirmation.
+            </div>
+        </div>
+        <div style='flex:1;min-width:160px;background:#f0fdf4;border-radius:10px;
+                    padding:12px 14px;border:1px solid #bbf7d044'>
+            <div style='font-size:18px;margin-bottom:6px'>📊</div>
+            <div style='font-size:12px;font-weight:700;color:#15803d'>Difference from Early Movers</div>
+            <div style='font-size:11px;color:#166534;margin-top:3px'>
+                Early Movers catches gap at open (9:15 AM).<br>
+                ORB catches consolidation breakout (9:20–10:30 AM).
+            </div>
+        </div>
+        <div style='flex:1;min-width:160px;background:#fff7ed;border-radius:10px;
+                    padding:12px 14px;border:1px solid #fdba7444'>
+            <div style='font-size:18px;margin-bottom:6px'>⏰</div>
+            <div style='font-size:12px;font-weight:700;color:#ea580c'>Best Time</div>
+            <div style='font-size:11px;color:#c2410c;margin-top:3px'>
+                9:20 AM – 10:30 AM on normal days.<br>
+                10:00 AM – 10:30 AM on expiry days.
+            </div>
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+    # ── Window status ─────────────────────────────────────
+    _orb_now  = ist_now()
+    _orb_tm   = _orb_now.hour * 60 + _orb_now.minute
+    try:
+        _orb_mkt_start = _orb_now.replace(hour=9, minute=15, second=0, microsecond=0)
+        _orb_mins      = int((_orb_now - _orb_mkt_start.astimezone(_orb_now.tzinfo)).total_seconds() / 60)
+    except Exception:
+        _orb_mins = 999
+
+    if not market_open():
+        _orb_status = "🔴 Market Closed — Run at 9:20 AM"
+        _orb_s_clr  = "#dc2626"; _orb_s_bg = "#fef2f2"
+    elif _orb_mins < 5:
+        _orb_status = f"⏳ Too early — {_orb_mins} min since open · Wait for first candle to form (9:20 AM)"
+        _orb_s_clr  = "#d97706"; _orb_s_bg = "#fffbeb"
+    elif _orb_mins <= 75:
+        _orb_status = f"🟢 PRIME WINDOW — {_orb_mins} min since open · ORB breakouts most reliable now"
+        _orb_s_clr  = "#15803d"; _orb_s_bg = "#f0fdf4"
+    elif _orb_mins <= 120:
+        _orb_status = f"🟡 Late window — {_orb_mins} min since open · Some breakouts still valid"
+        _orb_s_clr  = "#d97706"; _orb_s_bg = "#fffbeb"
+    else:
+        _orb_status = f"⚪ Too late — {_orb_mins} min since open · ORB breakouts less reliable after 11:15 AM"
+        _orb_s_clr  = "#64748b"; _orb_s_bg = "#f8fafc"
+
+    st.markdown(
+        f"<div style='background:{_orb_s_bg};border:1.5px solid {_orb_s_clr}44;"
+        f"border-radius:12px;padding:10px 18px;margin-bottom:14px'>"
+        f"<div style='font-size:13px;font-weight:700;color:{_orb_s_clr}'>{_orb_status}</div>"
+        f"</div>", unsafe_allow_html=True)
+
+    # ── Controls ──────────────────────────────────────────
+    _ob1, _ob2 = st.columns([3, 1])
+    with _ob1:
+        _orb_universe = st.radio(
+            "Scan universe",
+            ["Top 100 Early Mover Stocks", "Custom Watchlist", "Full NSE 500"],
+            horizontal=True, key="orb_page_universe",
+            help="Top 100 = fastest (~30s). Best for morning ORB window.")
+        _orb_count = (len(EARLY_MOVER_STOCKS) if _orb_universe == "Top 100 Early Mover Stocks"
+                      else len(selected_stocks) if _orb_universe == "Custom Watchlist"
+                      else len(POPULAR_STOCKS))
+        st.markdown(
+            f"<div style='font-size:11px;color:#64748b;margin-top:-8px'>"
+            f"⚡ {_orb_count} stocks · "
+            f"{'~30 sec' if _orb_count <= 120 else '~60 sec' if _orb_count <= 250 else '~90 sec'}"
+            f" scan time</div>", unsafe_allow_html=True)
+    with _ob2:
+        _run_orb_page = st.button(
+            "🔓 Run ORB Scan",
+            key="run_orb_page",
+            use_container_width=True,
+            type="primary",
+            help="Scan for opening range breakouts")
+
+    # ── Run scan ──────────────────────────────────────────
+    if _run_orb_page:
+        _orb_stocks = (EARLY_MOVER_STOCKS  if _orb_universe == "Top 100 Early Mover Stocks"
+                       else selected_stocks if _orb_universe == "Custom Watchlist"
+                       else POPULAR_STOCKS)
+        _kite_orb_pg = get_kite_client()
+        _port_orb_pg = load_portfolio()
+
+        with st.spinner(f"🔓 Scanning {len(_orb_stocks)} stocks for breakouts..."):
+            _orb_page_results = run_breakout_screener(
+                _orb_stocks, interval, _kite_orb_pg, _port_orb_pg)
+
+        st.session_state['orb_results']   = _orb_page_results
+        st.session_state['orb_scan_time'] = ist_now().strftime('%H:%M IST')
+        st.rerun()
+
+    # ── Results ───────────────────────────────────────────
+    _orb_results = st.session_state.get('orb_results', [])
+    _orb_time    = st.session_state.get('orb_scan_time', '')
+
+    if not _orb_results:
+        st.markdown(f"""
+        <div style='background:#1a2035;border-radius:16px;padding:32px;
+                    text-align:center;margin:20px 0'>
+            <div style='font-size:40px;margin-bottom:12px'>🔓</div>
+            <div style='font-size:18px;font-weight:800;color:#ffffff;margin-bottom:8px'>
+                No results yet
+            </div>
+            <div style='font-size:13px;color:rgba(255,255,255,0.5);line-height:1.8'>
+                Click <b style='color:#f59e0b'>🔓 Run ORB Scan</b> above.<br>
+                Best used <b style='color:#f59e0b'>9:20 AM – 10:30 AM IST</b> on normal days.<br>
+                After a stock consolidates for 5+ minutes and then breaks out.
+            </div>
+        </div>""", unsafe_allow_html=True)
+
+    else:
+        # Header
+        st.markdown(
+            f"<div style='display:flex;justify-content:space-between;align-items:center;"
+            f"flex-wrap:wrap;gap:8px;margin-bottom:12px'>"
+            f"<div style='font-size:14px;font-weight:700;color:#1a2035'>"
+            f"🔓 {len(_orb_results)} breakouts found · {_orb_time}</div>"
+            f"<div style='display:flex;gap:8px'>"
+            f"<span style='background:#f5f3ff;color:#7c3aed;font-size:11px;font-weight:700;"
+            f"border-radius:6px;padding:3px 10px'>Top score: {_orb_results[0]['best']['score']}</span>"
+            f"</div></div>", unsafe_allow_html=True)
+
+        # Entry guide
+        st.markdown("""
+        <div style='background:#1a2035;border-radius:10px;padding:12px 18px;margin-bottom:14px'>
+            <div style='font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:6px'>
+                📋 How to trade ORB — 3 steps
+            </div>
+            <div style='font-size:11px;color:rgba(255,255,255,0.7);line-height:2'>
+                <b style='color:#34d399'>Step 1:</b>
+                Pick ENTER NOW stocks with score ≥ 75 and Vol ≥ 2×.<br>
+                <b style='color:#34d399'>Step 2:</b>
+                Stop Loss = first candle LOW (ORB low). Not ATR-based.<br>
+                <b style='color:#34d399'>Step 3:</b>
+                Target = first candle range × 1.5 above the breakout point.
+            </div>
+        </div>""", unsafe_allow_html=True)
+
+        # Result cards
+        for _bo_r in _orb_results[:15]:
+            _best  = _bo_r['best']
+            _bc    = _best['color']
+            _bbg   = _best['bg']
+            _chg   = _bo_r['chg_pct']
+            _chgc  = "#16a34a" if _chg >= 0 else "#dc2626"
+
+            # Build patterns HTML separately to avoid nested f-string issues
+            _orb_patterns_html = ""
+            for _p in _bo_r['breakouts']:
+                _p_msg = _p['msg'][_p['msg'].find('|')+2:] if '|' in _p['msg'] else _p['msg']
+                _orb_patterns_html += (
+                    f"<div style='background:{_p['bg']};border-left:4px solid {_p['color']};"
+                    f"border-radius:0 8px 8px 0;padding:8px 12px;margin-bottom:4px'>"
+                    f"<div style='font-size:12px;font-weight:700;color:{_p['color']}'>"
+                    f"{_p['icon']} {_p['title']}</div>"
+                    f"<div style='font-size:11px;color:#374151;margin-top:3px'>{_p_msg}</div>"
+                    f"<div style='font-size:11px;font-weight:700;color:{_p['color']};"
+                    f"margin-top:4px;background:white;border-radius:6px;"
+                    f"padding:4px 10px;display:inline-block'>➤ {_p['action']}</div>"
+                    f"</div>"
+                )
+
+            _oc1, _oc2 = st.columns([5, 1])
+            with _oc1:
+                st.markdown(f"""
+                <div style='background:#ffffff;border:1.5px solid {_bc}33;
+                            border-radius:14px;padding:16px 18px;margin-bottom:8px;
+                            box-shadow:0 2px 8px rgba(0,0,0,0.04)'>
+                    <div style='display:flex;align-items:flex-start;
+                                justify-content:space-between;flex-wrap:wrap;gap:8px'>
+                        <div style='display:flex;align-items:center;gap:12px'>
+                            <div style='font-size:28px'>{_best['icon']}</div>
+                            <div>
+                                <div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'>
+                                    <span style='font-size:20px;font-weight:800;color:#1a2035'>
+                                        {_bo_r['sym_clean']}
+                                    </span>
+                                    <span style='background:{_bbg};color:{_bc};
+                                                 font-size:12px;font-weight:700;
+                                                 border-radius:6px;padding:3px 10px'>
+                                        {_best['title']}
+                                    </span>
+                                    <span style='background:#f5f3ff;color:#7c3aed;
+                                                 font-size:11px;font-weight:700;
+                                                 border-radius:6px;padding:2px 8px'>
+                                        Score {_best['score']}
+                                    </span>
+                                    <span style='font-size:10px;color:#94a3b8'>
+                                        {'⚡ Kite' if _bo_r.get('src')=='kite' else '⏳ yfinance'}
+                                    </span>
+                                </div>
+                                <div style='font-size:12px;color:#64748b;margin-top:4px'>
+                                    Prev ₹{_bo_r['prev_close']:,.2f}
+                                    &nbsp;·&nbsp; Now ₹{_bo_r['price']:,.2f}
+                                    &nbsp;·&nbsp; Vol {_bo_r['vol_ratio']}×
+                                </div>
+                            </div>
+                        </div>
+                        <div style='text-align:right'>
+                            <div style='font-size:22px;font-weight:800;color:#1a2035;
+                                        font-family:JetBrains Mono'>
+                                ₹{_bo_r['price']:,.2f}
+                            </div>
+                            <div style='font-size:13px;font-weight:700;color:{_chgc}'>
+                                {_chg:+.2f}% from yesterday
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- All patterns found -->
+                    <div style='margin-top:12px;display:flex;flex-direction:column;gap:6px'>
+                        {_orb_patterns_html}
+                    </div>
+                </div>""", unsafe_allow_html=True)
+            with _oc2:
+                st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+
+                _orb_sym    = _bo_r['sym_clean']
+                _orb_entry  = _bo_r['price']
+                _orb_prev   = _bo_r['prev_close']
+                # SL = below first candle low (approx open price - 0.5%)
+                _orb_sl     = round(_orb_entry * 0.995, 2)
+                # Target = 1.5× the ORB range above entry
+                _orb_range  = _bo_r.get('orb_range', _orb_entry * 0.005)
+                _orb_t1     = round(_orb_entry + _orb_range * 1.5, 2)
+                _orb_risk_d = max(_orb_entry - _orb_sl, 0.01)
+                _orb_qty    = max(1, int((capital * risk_pct / 100) / _orb_risk_d))
+
+                _orb_is_buy = _bo_r.get('best', {}).get('score', 0) >= 60
+
+                if _orb_is_buy:
+                    if st.button(
+                        f"✅ Paper Buy",
+                        key=f"orb_paper_buy_{_orb_sym}",
+                        use_container_width=True,
+                        type="primary",
+                    ):
+                        _port = load_portfolio()
+                        _already = any(
+                            p.get('symbol') == _orb_sym and p.get('status') == 'OPEN'
+                            for p in _port
+                        )
+                        if _already:
+                            st.warning(f"⚠️ Already open: {_orb_sym}")
+                        else:
+                            _port.append({
+                                'symbol':      _orb_sym,
+                                'status':      'OPEN',
+                                'entry':       round(_orb_entry, 2),
+                                'qty':         _orb_qty,
+                                'stop_loss':   _orb_sl,
+                                't1':          _orb_t1,
+                                't2':          round(_orb_entry + _orb_range * 2.5, 2),
+                                't3':          0, 't4': 0,
+                                'investment':  round(_orb_entry * _orb_qty, 2),
+                                'actual_cost': round(_orb_entry * _orb_qty, 2),
+                                'timeframe':   '1min — ORB Breakout',
+                                'date':        ist_now().strftime('%d %b %Y %H:%M'),
+                                'score':       _bo_r.get('best', {}).get('score', 0),
+                                'verdict':     _bo_r.get('best', {}).get('title', 'ORB BUY'),
+                                'vol_ratio':   _bo_r.get('vol_ratio', 0),
+                                'source':      'orb_scanner',
+                            })
+                            save_portfolio(_port)
+                            st.session_state['paper_portfolio'] = _port
+                            st.success(
+                                f"✅ Bought {_orb_qty} × {_orb_sym} @ ₹{_orb_entry:,.2f} · "
+                                f"SL ₹{_orb_sl:,.2f} · T1 ₹{_orb_t1:,.2f}"
+                            )
+                            st.rerun()
+                else:
+                    if st.button(
+                        "🔬 Analyse",
+                        key=f"orb_page_analyse_{_orb_sym}",
+                        use_container_width=True,
+                    ):
+                        st.session_state['_focus_stock'] = _orb_sym
+                        st.session_state['active_page']  = "📊  Scanner"
+                        st.rerun()
+
+        # Refresh button
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+        if st.button("🔄 Refresh ORB Scan", key="orb_page_refresh",
+                     use_container_width=True):
+            st.session_state.pop('orb_results', None)
+            st.rerun()
+
+
+if _show_earlymovers:
+
+    # ══════════════════════════════════════════════════════
+    #  EXPIRY DAY DETECTION
+    #  Nifty weekly = every Thursday
+    #  Bank Nifty   = every Wednesday
+    #  Monthly      = last Thursday of month
+    # ══════════════════════════════════════════════════════
+    _expiry_info = detect_expiry()  # uses top-level function
+    _is_expiry   = _expiry_info['is_expiry']
+    _is_monthly  = _expiry_info['is_monthly']
+
+    # Banking stocks that get pinned on expiry
+    _BANKING_PINNED = {
+        'HDFCBANK','ICICIBANK','AXISBANK','KOTAKBANK','SBIN','INDUSINDBK',
+        'BANDHANBNK','FEDERALBNK','IDFCFIRSTB','AUBANK','RBLBANK','PNB',
+        'BANKBARODA','CANBK','YESBANK',
+    }
+
+    # ── Topbar ────────────────────────────────────────────
+    _em_topbar_sub = (
+        f"⚠️ {_expiry_info['expiry_label']} · Entry: {_expiry_info['best_entry_time']} · Exit by {_expiry_info['exit_time']}"
+        if _is_expiry else
+        "Gap-up stocks with volume explosion · No indicators needed · Best used 9:15 AM – 9:30 AM"
+    )
+    _em_topbar_clr = "#f59e0b" if _is_expiry else "rgba(255,255,255,0.6)"
+    st.markdown(f"""
+    <div class='topbar'>
+        <div>
+            <div class='topbar-title'>🚀 Early Movers — First 15 Minutes</div>
+            <div class='topbar-subtitle' style='color:{_em_topbar_clr}'>
+                {_em_topbar_sub}
+            </div>
+        </div>
+        {"<div class='topbar-badge' style='background:rgba(239,68,68,0.2);color:#fca5a5;border-color:rgba(239,68,68,0.4)'>⚠️ EXPIRY DAY</div>" if _is_expiry else ""}
+    </div>""", unsafe_allow_html=True)
+
+    # ══════════════════════════════════════════════════════
+    #  EXPIRY DAY BANNER
+    # ══════════════════════════════════════════════════════
+    if _is_expiry:
+        _exp_bg  = "#450a0a" if _is_monthly else "#1c1917"
+        _exp_bdr = "#dc2626" if _is_monthly else "#d97706"
+        _exp_ttl = "#fca5a5" if _is_monthly else "#fbbf24"
+        st.markdown(
+            f"<div style='background:{_exp_bg};border:2px solid {_exp_bdr};"
+            f"border-radius:14px;padding:18px 22px;margin-bottom:16px'>"
+            f"<div style='font-size:16px;font-weight:800;color:{_exp_ttl};margin-bottom:10px'>"
+            f"{'🚨' if _is_monthly else '⚠️'} {_expiry_info['expiry_label']}</div>"
+            f"<div style='display:flex;gap:16px;flex-wrap:wrap'>"
+            # Rules
+            f"<div style='flex:1;min-width:200px'>"
+            f"<div style='font-size:11px;font-weight:700;color:{_exp_ttl};letter-spacing:1px;margin-bottom:6px'>EXPIRY RULES</div>"
+            f"<div style='font-size:11px;color:rgba(255,255,255,0.7);line-height:1.9'>"
+            f"🚫 No entry before <b style='color:{_exp_ttl}'>10:00 AM</b> — fake moves<br>"
+            f"⏳ Need <b style='color:{_exp_ttl}'>3 candle confirmation</b> before entry<br>"
+            f"🎯 Target = <b style='color:{_exp_ttl}'>{_expiry_info['target_multiplier']}× gap</b> (take profit early)<br>"
+            f"🚪 Exit ALL by <b style='color:{_exp_ttl}'>{_expiry_info['exit_time']}</b> — extreme volatility after<br>"
+            f"📉 Gap fill probability = <b style='color:{_exp_ttl}'>{_expiry_info['gap_fill_prob']}%</b> (vs 30% normal)"
+            f"</div></div>"
+            # Entry window
+            f"<div style='flex:1;min-width:200px'>"
+            f"<div style='font-size:11px;font-weight:700;color:{_exp_ttl};letter-spacing:1px;margin-bottom:6px'>BEST ENTRY WINDOWS</div>"
+            f"<div style='font-size:11px;color:rgba(255,255,255,0.7);line-height:1.9'>"
+            f"🔴 <b>9:15–10:00 AM</b> — AVOID (fake moves, traps)<br>"
+            f"🟡 <b>10:00–10:30 AM</b> — Only confirmed 3-candle breakouts<br>"
+            f"🔴 <b>10:30–1:30 PM</b> — AVOID (time decay, choppy)<br>"
+            f"🟢 <b>1:30–2:30 PM</b> — BEST window (genuine direction)<br>"
+            f"🚫 <b>After 2:30 PM</b> — Close all, extreme volatility"
+            f"</div></div>"
+            # Avoid list
+            f"<div style='flex:1;min-width:200px'>"
+            f"<div style='font-size:11px;font-weight:700;color:{_exp_ttl};letter-spacing:1px;margin-bottom:6px'>AVOID THESE STOCKS</div>"
+            f"<div style='font-size:11px;color:rgba(255,255,255,0.7);line-height:1.9'>"
+            f"🏦 All banking stocks — options pinning<br>"
+            f"🔢 Stocks near round numbers ₹100/200/500<br>"
+            f"📊 Stocks that moved >3% already — chasing<br>"
+            f"✅ <b style='color:{_exp_ttl}'>Prefer:</b> Mid-cap IT, Pharma, Consumer<br>"
+            f"✅ These move on merit, not options pinning"
+            f"</div></div>"
+            f"</div></div>", unsafe_allow_html=True)
+
+    # ── Time window status ────────────────────────────────
+    _now_em    = ist_now()
+    _tm_em     = _now_em.hour * 60 + _now_em.minute
+    _mkt_start = _now_em.replace(hour=9, minute=15, second=0, microsecond=0)
+    try:
+        _mins_since = int((_now_em - _mkt_start.astimezone(_now_em.tzinfo)).total_seconds() / 60)
+    except Exception:
+        _mins_since = 999
+
+    if not market_open():
+        _em_status     = "🔴 Market Closed — Run at 9:15 AM for live results"
+        _em_status_clr = "#dc2626"
+        _em_status_bg  = "#fef2f2"
+    elif _is_expiry:
+        # Expiry-specific time windows
+        if _tm_em < 615:    # before 10:15 AM
+            _em_status     = f"🔴 EXPIRY — Too early ({_mins_since} min since open) · Fake moves likely · Wait until 10:00 AM"
+            _em_status_clr = "#dc2626"
+            _em_status_bg  = "#fef2f2"
+        elif _tm_em <= 630:   # 10:00–10:30 AM
+            _em_status     = f"🟡 EXPIRY — Confirmation window · Only enter with 3-candle breakout confirmed"
+            _em_status_clr = "#d97706"
+            _em_status_bg  = "#fffbeb"
+        elif _tm_em < 810:   # 10:30 AM–1:30 PM
+            _em_status     = f"🔴 EXPIRY — Choppy zone · Avoid new entries · Wait for 1:30 PM window"
+            _em_status_clr = "#dc2626"
+            _em_status_bg  = "#fef2f2"
+        elif _tm_em <= 870:  # 1:30–2:30 PM
+            _em_status     = f"🟢 EXPIRY BEST WINDOW — 1:30–2:30 PM · Genuine moves now · Enter with normal rules"
+            _em_status_clr = "#15803d"
+            _em_status_bg  = "#f0fdf4"
+        else:
+            _em_status     = f"🚫 EXPIRY — Past 2:30 PM · Close all positions · Do not enter"
+            _em_status_clr = "#7f1d1d"
+            _em_status_bg  = "#fef2f2"
+    else:
+        # Normal day windows
+        if _mins_since <= 15:
+            _em_status     = f"🟢 PRIME WINDOW — {_mins_since} min since open · Best time to catch moves"
+            _em_status_clr = "#15803d"
+            _em_status_bg  = "#f0fdf4"
+        elif _mins_since <= 30:
+            _em_status     = f"🟡 Good Window — {_mins_since} min since open · Most moves already started"
+            _em_status_clr = "#d97706"
+            _em_status_bg  = "#fffbeb"
+        else:
+            _em_status     = f"⚪ Late — {_mins_since} min since open · Use normal scanner instead"
+            _em_status_clr = "#64748b"
+            _em_status_bg  = "#f8fafc"
+
+    st.markdown(
+        f"<div style='background:{_em_status_bg};border:1.5px solid {_em_status_clr}44;"
+        f"border-radius:12px;padding:12px 18px;margin-bottom:14px'>"
+        f"<div style='font-size:14px;font-weight:700;color:{_em_status_clr}'>"
+        f"{_em_status}</div>"
+        f"<div style='font-size:11px;color:{_em_status_clr};margin-top:4px;opacity:0.8'>"
+        f"{'Expiry mode: 3-candle confirmation required · Banking stocks flagged · Reduced targets'  if _is_expiry else 'Normal mode: Gap > 1% + Vol > 3× + Price holding above open'}"
+        f"</div></div>", unsafe_allow_html=True)
+
+    # ── Rules explanation (changes on expiry) ─────────────
+    if _is_expiry:
+        st.markdown(f"""
+        <div style='display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap'>
+            <div style='flex:1;min-width:160px;background:#fef2f2;border-radius:10px;
+                        padding:12px 14px;border:1px solid #fecaca44'>
+                <div style='font-size:20px;margin-bottom:6px'>📐</div>
+                <div style='font-size:12px;font-weight:700;color:#dc2626'>Rule 1 — Gap Up</div>
+                <div style='font-size:11px;color:#991b1b;margin-top:3px'>
+                    Same as normal day.<br>
+                    But gap fill chance = <b>{_expiry_info['gap_fill_prob']}%</b>
+                </div>
+            </div>
+            <div style='flex:1;min-width:160px;background:#fffbeb;border-radius:10px;
+                        padding:12px 14px;border:1px solid #fbbf2444'>
+                <div style='font-size:20px;margin-bottom:6px'>📊</div>
+                <div style='font-size:12px;font-weight:700;color:#d97706'>Rule 2 — Volume</div>
+                <div style='font-size:11px;color:#b45309;margin-top:3px'>
+                    Same check.<br>
+                    High vol on expiry may be <b>hedging</b>, not buying.
+                </div>
+            </div>
+            <div style='flex:1;min-width:160px;background:#fff7ed;border-radius:10px;
+                        padding:12px 14px;border:1px solid #fdba7444'>
+                <div style='font-size:20px;margin-bottom:6px'>3️⃣</div>
+                <div style='font-size:12px;font-weight:700;color:#ea580c'>Rule 3 — 3 Candles</div>
+                <div style='font-size:11px;color:#c2410c;margin-top:3px'>
+                    <b>NEW on expiry.</b> Price must make<br>
+                    3 consecutive higher highs.
+                </div>
+            </div>
+            <div style='flex:1;min-width:160px;background:#f0fdf4;border-radius:10px;
+                        padding:12px 14px;border:1px solid #bbf7d044'>
+                <div style='font-size:20px;margin-bottom:6px'>⏰</div>
+                <div style='font-size:12px;font-weight:700;color:#15803d'>Rule 4 — Time Gate</div>
+                <div style='font-size:11px;color:#166534;margin-top:3px'>
+                    <b>NEW on expiry.</b> No entry before<br>
+                    10:00 AM regardless of signal.
+                </div>
+            </div>
+        </div>""", unsafe_allow_html=True)
+    else:
+        st.markdown("""
+        <div style='display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap'>
+            <div style='flex:1;min-width:180px;background:#f5f3ff;border-radius:10px;
+                        padding:12px 14px;border:1px solid #c4b5fd44'>
+                <div style='font-size:20px;margin-bottom:6px'>📐</div>
+                <div style='font-size:12px;font-weight:700;color:#7c3aed'>Rule 1 — Gap Up</div>
+                <div style='font-size:11px;color:#6d28d9;margin-top:3px'>
+                    Opened > 1% above yesterday's close.<br>
+                    Shows overnight demand.
+                </div>
+            </div>
+            <div style='flex:1;min-width:180px;background:#fffbeb;border-radius:10px;
+                        padding:12px 14px;border:1px solid #fbbf2444'>
+                <div style='font-size:20px;margin-bottom:6px'>📊</div>
+                <div style='font-size:12px;font-weight:700;color:#d97706'>Rule 2 — Volume Surge</div>
+                <div style='font-size:11px;color:#b45309;margin-top:3px'>
+                    First candle volume > 3× average.<br>
+                    Shows institutions are buying.
+                </div>
+            </div>
+            <div style='flex:1;min-width:180px;background:#f0fdf4;border-radius:10px;
+                        padding:12px 14px;border:1px solid #bbf7d044'>
+                <div style='font-size:20px;margin-bottom:6px'>📌</div>
+                <div style='font-size:12px;font-weight:700;color:#15803d'>Rule 3 — Gap Holding</div>
+                <div style='font-size:11px;color:#166534;margin-top:3px'>
+                    Current price still above opening price.<br>
+                    Gap not fading = buyers in control.
+                </div>
+            </div>
+        </div>""", unsafe_allow_html=True)
+
+    # ── Controls ──────────────────────────────────────────
+    _em_c1, _em_c2, _em_c3 = st.columns([2, 1, 1])
+    with _em_c1:
+        _em_universe = st.radio(
+            "Scan universe",
+            ["Top 100 Early Mover Stocks", "Custom Watchlist", "Full NSE 500"],
+            horizontal=True, key="em_universe",
+            help="Top 100 = fastest (~30s). Full NSE 500 = 90s — too slow for early movers.")
+        _em_count = (len(EARLY_MOVER_STOCKS) if _em_universe == "Top 100 Early Mover Stocks"
+                     else len(selected_stocks) if _em_universe == "Custom Watchlist"
+                     else len(POPULAR_STOCKS))
+        st.markdown(
+            f"<div style='font-size:11px;color:#64748b;margin-top:-8px'>"
+            f"⚡ {_em_count} stocks · "
+            f"{'~30 sec' if _em_count <= 120 else '~60 sec' if _em_count <= 250 else '~90 sec'}"
+            f" scan time</div>", unsafe_allow_html=True)
+    with _em_c2:
+        _em_gap_min = st.number_input(
+            "Min gap %", min_value=0.5, max_value=5.0,
+            value=1.0, step=0.5, format="%.1f", key="em_gap_min",
+            help="Minimum gap-up % from previous close")
+    with _em_c3:
+        _em_vol_min = st.number_input(
+            "Min volume ×", min_value=1.5, max_value=15.0,
+            value=3.0, step=0.5, format="%.1f", key="em_vol_min",
+            help="Minimum first-candle volume vs average")
+
+    _run_em = st.button(
+        "🚀 Scan Early Movers Now",
+        key="run_early_movers", use_container_width=True, type="primary",
+        help="Scans stocks for gap-up + volume surge.")
+
+    # ══════════════════════════════════════════════════════
+    #  SCANNER FUNCTION — EXPIRY AWARE
+    # ══════════════════════════════════════════════════════
+    def scan_early_movers(stocks, gap_min_pct, vol_min_x, kite, is_expiry_day):
+        """
+        Price + volume scan with optional expiry-day rules.
+        On expiry: 3-candle confirmation, banking flagged, reduced targets.
+        """
+        results   = []
+        total     = len(stocks)
+        _prog_em  = st.progress(0, text="🚀 Scanning for early movers...")
+        _stat_em  = st.empty()
+
+        import pytz as _ptz_em
+        _ist_em   = _ptz_em.timezone('Asia/Kolkata')
+        _today_em = datetime.now(_ist_em).date()
+        _now_min  = ist_now().hour * 60 + ist_now().minute
+
+        for idx, symbol in enumerate(stocks):
+            pct       = int(((idx + 1) / total) * 100)
+            sym_clean = symbol.replace('.NS', '')
+            _prog_em.progress(pct, text=f"🚀 {idx+1}/{total} · {sym_clean}")
+
+            try:
+                _ck = _cache_key(symbol, '1minute')
+                if _ck in _DATA_CACHE:
+                    df, src = _DATA_CACHE[_ck]
+                else:
+                    df, src = fetch_intraday(symbol, '1minute', '1d', kite=kite)
+                    if df is None or len(df) < 3:
+                        continue
+
+                _idx_em = pd.to_datetime(df.index)
+                if _idx_em.tzinfo is None:
+                    _idx_em = _idx_em.tz_localize('UTC').tz_convert('Asia/Kolkata')
+                else:
+                    _idx_em = _idx_em.tz_convert('Asia/Kolkata')
+
+                _today_df = df[_idx_em.date == _today_em]
+                _prev_df  = df[_idx_em.date < _today_em]
+
+                if len(_today_df) < 1 or len(_prev_df) < 5:
+                    continue
+
+                _prev_close  = float(_prev_df['Close'].iloc[-1])
+                _open_price  = float(_today_df['Open'].iloc[0])
+                _curr_price  = float(_today_df['Close'].iloc[-1])
+                _first_vol   = float(_today_df['Volume'].iloc[0])
+                _avg_vol     = float(_prev_df['Volume'].mean())
+
+                if _avg_vol <= 0:
+                    continue
+
+                # ── Rule 1: Gap up ────────────────────────
+                _gap_pct = (_open_price - _prev_close) / _prev_close * 100
+                if _gap_pct < gap_min_pct:
+                    continue
+
+                # ── Rule 2: Volume ────────────────────────
+                _vol_x = _first_vol / _avg_vol
+                if _vol_x < vol_min_x:
+                    continue
+
+                # ── Rule 3: Gap holding ───────────────────
+                _holding  = _curr_price >= _open_price * 0.998
+                _fade_pct = (_curr_price - _open_price) / _open_price * 100
+                _day_chg  = (_curr_price - _prev_close) / _prev_close * 100
+
+                # ── Expiry Rule: 3-candle confirmation ────
+                _three_candle_confirmed = False
+                _candle_detail = ""
+                if is_expiry_day and len(_today_df) >= 3:
+                    _highs = _today_df['High'].values
+                    _closes= _today_df['Close'].values
+                    _vols  = _today_df['Volume'].values
+                    # 3 consecutive higher highs AND volume not declining
+                    _hh3   = all(_highs[i] > _highs[i-1] for i in range(1, min(3, len(_highs))))
+                    _vol_ok= not (_vols[-1] < _vols[-2] < _vols[0]) if len(_vols) >= 3 else True
+                    _three_candle_confirmed = _hh3 and _vol_ok and _holding
+                    _candle_detail = (
+                        "✅ 3 higher highs confirmed" if _three_candle_confirmed
+                        else "⏳ Not yet confirmed — watch"
+                    )
+                elif not is_expiry_day:
+                    _three_candle_confirmed = True   # no extra check on normal day
+
+                # ── Banking check ─────────────────────────
+                _is_banking = sym_clean in _BANKING_PINNED
+                _banking_warn = "🏦 Options pinning risk" if (_is_expiry and _is_banking) else ""
+
+                # ── Time gate on expiry ───────────────────
+                _time_blocked = is_expiry_day and _now_min < 600  # before 10:00 AM
+
+                # ── Strength score ────────────────────────
+                _strength = round(_gap_pct * _vol_x, 1)
+
+                # ── Target calculation ────────────────────
+                _tgt_mult   = _expiry_info['target_multiplier'] if is_expiry_day else 1.5
+                _target_px  = round(_open_price + (_open_price - _prev_close) * _tgt_mult, 2)
+                _target_lbl = f"{_tgt_mult}× gap {'(expiry reduced)' if is_expiry_day else ''}"
+
+                # ── Action label ──────────────────────────
+                if _time_blocked:
+                    _action     = "⏳ WAIT — Before 10 AM"
+                    _action_clr = "#d97706"
+                    _action_bg  = "#fffbeb"
+                elif is_expiry_day and not _three_candle_confirmed:
+                    _action     = "⏳ WAIT — Need 3 candles"
+                    _action_clr = "#d97706"
+                    _action_bg  = "#fffbeb"
+                elif is_expiry_day and _is_banking:
+                    _action     = "⚠️ CAUTION — Banking"
+                    _action_clr = "#ea580c"
+                    _action_bg  = "#fff7ed"
+                elif not _holding:
+                    _action     = "⚠️ FADING"
+                    _action_clr = "#dc2626"
+                    _action_bg  = "#fff5f5"
+                elif _vol_x >= 8 and _gap_pct >= 2.0 and _holding:
+                    _action     = "🏦 ENTER NOW"
+                    _action_clr = "#15803d"
+                    _action_bg  = "#dcfce7"
+                elif _vol_x >= 5 and _gap_pct >= 1.5 and _holding:
+                    _action     = "🔥 ENTER NOW"
+                    _action_clr = "#16a34a"
+                    _action_bg  = "#f0fdf4"
+                elif _vol_x >= 3 and _gap_pct >= 1.0 and _holding:
+                    _action     = "⚡ WATCH"
+                    _action_clr = "#d97706"
+                    _action_bg  = "#fffbeb"
+                else:
+                    _action     = "👀 MONITOR"
+                    _action_clr = "#64748b"
+                    _action_bg  = "#f8fafc"
+
+                results.append({
+                    'symbol':       symbol,
+                    'sym_clean':    sym_clean,
+                    'prev_close':   round(_prev_close, 2),
+                    'open_price':   round(_open_price, 2),
+                    'curr_price':   round(_curr_price, 2),
+                    'gap_pct':      round(_gap_pct, 2),
+                    'vol_x':        round(_vol_x, 1),
+                    'holding':      _holding,
+                    'fade_pct':     round(_fade_pct, 2),
+                    'day_chg':      round(_day_chg, 2),
+                    'strength':     _strength,
+                    'action':       _action,
+                    'action_clr':   _action_clr,
+                    'action_bg':    _action_bg,
+                    'src':          src,
+                    'n_candles':    len(_today_df),
+                    'is_banking':   _is_banking,
+                    'banking_warn': _banking_warn,
+                    'three_candle': _three_candle_confirmed,
+                    'candle_detail':_candle_detail,
+                    'time_blocked': _time_blocked,
+                    'target_px':    _target_px,
+                    'target_lbl':   _target_lbl,
+                    'gap_fill_prob':_expiry_info['gap_fill_prob'] if is_expiry_day else 30,
+                })
+
+                if len(results) % 5 == 0:
+                    _stat_em.markdown(
+                        f"<div style='font-size:12px;color:#7c3aed;padding:4px 0'>"
+                        f"🚀 {len(results)} movers found so far...</div>",
+                        unsafe_allow_html=True)
+
+            except Exception:
+                continue
+
+        _prog_em.empty()
+        _stat_em.empty()
+        results.sort(key=lambda x: x['strength'], reverse=True)
+        return results
+
+    # ── Run scan ──────────────────────────────────────────
+    if _run_em:
+        _em_stocks = (EARLY_MOVER_STOCKS  if _em_universe == "Top 100 Early Mover Stocks"
+                      else selected_stocks if _em_universe == "Custom Watchlist"
+                      else POPULAR_STOCKS)
+        _kite_em   = get_kite_client()
+        with st.spinner(""):
+            _em_results = scan_early_movers(
+                _em_stocks, _em_gap_min, _em_vol_min, _kite_em, _is_expiry)
+        st.session_state['early_movers']      = _em_results
+        st.session_state['early_movers_time'] = ist_now().strftime('%H:%M:%S IST')
+        st.session_state['early_movers_gap']  = _em_gap_min
+        st.session_state['early_movers_vol']  = _em_vol_min
+        st.rerun()
+
+    # ── Show results ──────────────────────────────────────
+    _em_results  = st.session_state.get('early_movers', [])
+    _em_scantime = st.session_state.get('early_movers_time', '')
+
+    if not _em_results:
+        st.markdown(f"""
+        <div style='background:#1a2035;border-radius:16px;padding:32px;
+                    text-align:center;margin:20px 0'>
+            <div style='font-size:40px;margin-bottom:12px'>🚀</div>
+            <div style='font-size:18px;font-weight:800;color:#ffffff;margin-bottom:8px'>
+                No results yet
+            </div>
+            <div style='font-size:13px;color:rgba(255,255,255,0.5);line-height:1.8'>
+                Click <b style='color:#f59e0b'>🚀 Scan Early Movers Now</b> above.<br>
+                {'<b style="color:#fbbf24">Expiry day:</b> Scan at 10:00 AM or 1:30 PM for best results.' if _is_expiry else
+                 'Best used between <b style="color:#f59e0b">9:15 AM and 9:30 AM IST</b>.'}
+            </div>
+        </div>""", unsafe_allow_html=True)
+
+    else:
+        # Header stats
+        _em_enter = sum(1 for r in _em_results if 'ENTER' in r['action'])
+        _em_watch = sum(1 for r in _em_results if 'WATCH' in r['action'])
+        _em_wait  = sum(1 for r in _em_results if 'WAIT' in r['action'])
+        _em_fade  = sum(1 for r in _em_results if 'FADING' in r['action'])
+        _em_caut  = sum(1 for r in _em_results if 'CAUTION' in r['action'])
+
+        _expiry_badge = (
+            f"<span style='background:#fef2f2;color:#dc2626;font-size:11px;"
+            f"font-weight:700;border-radius:6px;padding:3px 10px'>⚠️ Expiry Mode</span>"
+            if _is_expiry else ""
+        )
+        st.markdown(
+            f"<div style='display:flex;justify-content:space-between;align-items:center;"
+            f"flex-wrap:wrap;gap:8px;margin-bottom:12px'>"
+            f"<div style='font-size:14px;font-weight:700;color:#1a2035'>"
+            f"🚀 {len(_em_results)} movers found · {_em_scantime}</div>"
+            f"<div style='display:flex;gap:6px;flex-wrap:wrap'>"
+            f"{_expiry_badge}"
+            f"<span style='background:#dcfce7;color:#15803d;font-size:11px;font-weight:700;border-radius:6px;padding:3px 10px'>✅ {_em_enter} Enter</span>"
+            f"<span style='background:#fffbeb;color:#d97706;font-size:11px;font-weight:700;border-radius:6px;padding:3px 10px'>👀 {_em_watch} Watch</span>"
+            f"{'<span style=\"background:#fff7ed;color:#ea580c;font-size:11px;font-weight:700;border-radius:6px;padding:3px 10px\">⏳ ' + str(_em_wait) + ' Wait</span>' if _em_wait else ''}"
+            f"{'<span style=\"background:#fef2f2;color:#dc2626;font-size:11px;font-weight:700;border-radius:6px;padding:3px 10px\">⚠️ ' + str(_em_fade) + ' Fading</span>' if _em_fade else ''}"
+            f"</div></div>", unsafe_allow_html=True)
+
+        # Entry guide (expiry-aware)
+        if _is_expiry:
+            _guide_bg    = "#451a03"
+            _guide_steps = (
+                f"<b style='color:#34d399'>Step 1:</b> Only look at <b>ENTER NOW</b> stocks — ignore WAIT and CAUTION.<br>"
+                f"<b style='color:#34d399'>Step 2:</b> Check ✅ 3-candle confirmation badge — must be confirmed.<br>"
+                f"<b style='color:#34d399'>Step 3:</b> SL = first candle LOW. Target = <b>{_expiry_info['target_multiplier']}× gap only</b> — book early.<br>"
+                f"<b style='color:#fbbf24'>Expiry rule:</b> Exit by <b>2:30 PM</b> regardless of profit/loss."
+            )
+        else:
+            _guide_bg    = "#1a2035"
+            _guide_steps = (
+                f"<b style='color:#34d399'>Step 1:</b> Look at ENTER NOW stocks only. Pick highest Vol× and gap%.<br>"
+                f"<b style='color:#34d399'>Step 2:</b> Check current price is still near open (not already up 3% more).<br>"
+                f"<b style='color:#34d399'>Step 3:</b> SL = first candle low. Target = 1.5× gap size. Exit if price falls below open."
+            )
+        st.markdown(
+            f"<div style='background:{_guide_bg};border-radius:10px;padding:12px 18px;"
+            f"margin-bottom:14px'>"
+            f"<div style='font-size:12px;font-weight:700;color:#f59e0b;margin-bottom:6px'>"
+            f"📋 How to trade {'(Expiry Mode)' if _is_expiry else '— 3 steps'}</div>"
+            f"<div style='font-size:11px;color:rgba(255,255,255,0.7);line-height:2'>"
+            f"{_guide_steps}</div></div>", unsafe_allow_html=True)
+
+        # ── Result cards ──────────────────────────────────
+        for _rank_em, _em in enumerate(_em_results[:15], 1):
+            _gc  = "#16a34a" if _em['day_chg'] >= 0 else "#dc2626"
+            _fc  = "#16a34a" if _em['holding'] else "#dc2626"
+            _fl  = f"+{_em['fade_pct']:.2f}% holding" if _em['holding'] else f"{_em['fade_pct']:.2f}% fading"
+            _vi  = ("🏦" if _em['vol_x'] >= 15 else "🔥" if _em['vol_x'] >= 8
+                    else "⚡" if _em['vol_x'] >= 5 else "↑")
+            _rb  = {1:"#f59e0b",2:"#94a3b8",3:"#b45309"}.get(_rank_em,"#e2e8f0")
+            _rt  = {1:"#1a2035",2:"#ffffff",3:"#ffffff"}.get(_rank_em,"#64748b")
+
+            # Extra badges for expiry
+            _extra_badges = ""
+            if _is_expiry:
+                if _em['three_candle']:
+                    _extra_badges += "<span style='background:#dcfce7;color:#15803d;font-size:10px;font-weight:700;border-radius:4px;padding:2px 7px'>✅ 3-candle confirmed</span> "
+                elif _em['n_candles'] >= 3:
+                    _extra_badges += "<span style='background:#fef3c7;color:#92400e;font-size:10px;font-weight:700;border-radius:4px;padding:2px 7px'>⏳ Not confirmed yet</span> "
+                if _em['is_banking']:
+                    _extra_badges += "<span style='background:#fef2f2;color:#dc2626;font-size:10px;font-weight:700;border-radius:4px;padding:2px 7px'>🏦 Pinning risk</span> "
+                if _em['time_blocked']:
+                    _extra_badges += "<span style='background:#fef2f2;color:#dc2626;font-size:10px;font-weight:700;border-radius:4px;padding:2px 7px'>⏰ Before 10 AM</span> "
+
+            # Card border — red for banking/wait on expiry, normal otherwise
+            _card_bdr = ("#fecaca" if (_is_expiry and (_em['is_banking'] or _em['time_blocked']))
+                         else "#e8ecf3")
+
+            _ec1, _ec2 = st.columns([5, 1])
+            with _ec1:
+                st.markdown(f"""
+                <div style='background:#ffffff;border:1.5px solid {_card_bdr};
+                            border-radius:14px;padding:16px 18px;margin-bottom:8px;
+                            box-shadow:0 2px 8px rgba(0,0,0,0.04)'>
+                    <div style='display:flex;align-items:flex-start;
+                                justify-content:space-between;flex-wrap:wrap;gap:8px'>
+                        <div style='display:flex;align-items:center;gap:12px'>
+                            <div style='background:{_rb};color:{_rt};width:32px;height:32px;
+                                        border-radius:50%;display:flex;align-items:center;
+                                        justify-content:center;font-size:14px;
+                                        font-weight:800;flex-shrink:0'>{_rank_em}</div>
+                            <div>
+                                <div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'>
+                                    <span style='font-size:20px;font-weight:800;color:#1a2035'>
+                                        {_em['sym_clean']}
+                                    </span>
+                                    <span style='background:{_em["action_bg"]};
+                                                 color:{_em["action_clr"]};
+                                                 font-size:12px;font-weight:700;
+                                                 border-radius:6px;padding:3px 10px'>
+                                        {_em['action']}
+                                    </span>
+                                    {_extra_badges}
+                                    <span style='font-size:10px;color:#94a3b8'>
+                                        {'⚡ Kite' if _em['src']=='kite' else '⏳ yfinance'}
+                                        &nbsp;·&nbsp; {_em['n_candles']} candles today
+                                    </span>
+                                </div>
+                                <div style='font-size:12px;color:#64748b;margin-top:4px'>
+                                    Prev ₹{_em['prev_close']:,.2f}
+                                    &nbsp;·&nbsp; Open ₹{_em['open_price']:,.2f}
+                                    &nbsp;·&nbsp; Now ₹{_em['curr_price']:,.2f}
+                                    {'&nbsp;·&nbsp; <b style="color:#d97706">Gap fill 65%</b>' if _is_expiry else ''}
+                                </div>
+                            </div>
+                        </div>
+                        <div style='text-align:right'>
+                            <div style='font-size:22px;font-weight:800;color:#1a2035;
+                                        font-family:JetBrains Mono'>₹{_em['curr_price']:,.2f}</div>
+                            <div style='font-size:13px;font-weight:700;color:{_gc}'>
+                                {'+' if _em['day_chg']>=0 else ''}{_em['day_chg']:.2f}% from yesterday
+                            </div>
+                        </div>
+                    </div>
+
+                    <div style='display:flex;gap:8px;margin-top:12px;flex-wrap:wrap'>
+                        <div style='background:#f5f3ff;border-radius:8px;padding:8px 14px;text-align:center;min-width:80px'>
+                            <div style='font-size:9px;font-weight:700;color:#7c3aed;letter-spacing:1px'>GAP UP</div>
+                            <div style='font-size:18px;font-weight:800;color:#7c3aed;font-family:JetBrains Mono'>
+                                +{_em['gap_pct']:.2f}%
+                            </div>
+                        </div>
+                        <div style='background:#fffbeb;border-radius:8px;padding:8px 14px;text-align:center;min-width:80px'>
+                            <div style='font-size:9px;font-weight:700;color:#d97706;letter-spacing:1px'>FIRST VOL</div>
+                            <div style='font-size:18px;font-weight:800;color:#d97706;font-family:JetBrains Mono'>
+                                {_vi}{_em['vol_x']:.1f}×
+                            </div>
+                        </div>
+                        <div style='background:#f0f9ff;border-radius:8px;padding:8px 14px;text-align:center;min-width:80px'>
+                            <div style='font-size:9px;font-weight:700;color:#0369a1;letter-spacing:1px'>STRENGTH</div>
+                            <div style='font-size:18px;font-weight:800;color:#0369a1;font-family:JetBrains Mono'>
+                                {_em['strength']:.0f}
+                            </div>
+                        </div>
+                        <div style='background:{_em["action_bg"]};border-radius:8px;padding:8px 14px;text-align:center;min-width:100px;flex:1'>
+                            <div style='font-size:9px;font-weight:700;color:{_em["action_clr"]};letter-spacing:1px'>GAP STATUS</div>
+                            <div style='font-size:13px;font-weight:700;color:{_fc};margin-top:2px'>{_fl}</div>
+                        </div>
+                        <div style='background:#fff5f5;border-radius:8px;padding:8px 14px;text-align:center;min-width:100px'>
+                            <div style='font-size:9px;font-weight:700;color:#dc2626;letter-spacing:1px'>
+                                SL {'(1st candle low)' if _is_expiry else '(OPEN PRICE)'}
+                            </div>
+                            <div style='font-size:14px;font-weight:800;color:#dc2626;font-family:JetBrains Mono'>
+                                ₹{_em['open_price']:,.2f}
+                            </div>
+                            <div style='font-size:9px;color:#dc2626'>exit if price falls below</div>
+                        </div>
+                        <div style='background:#f0fdf4;border-radius:8px;padding:8px 14px;text-align:center;min-width:100px'>
+                            <div style='font-size:9px;font-weight:700;color:#15803d;letter-spacing:1px'>
+                                TARGET ({_em['target_lbl']})
+                            </div>
+                            <div style='font-size:14px;font-weight:800;color:#15803d;font-family:JetBrains Mono'>
+                                ₹{_em['target_px']:,.2f}
+                            </div>
+                            <div style='font-size:9px;color:#15803d'>
+                                {'Gap fill prob: ' + str(_em['gap_fill_prob']) + '%' if _is_expiry else 'R:R ≈ 1.5:1'}
+                            </div>
+                        </div>
+                    </div>
+                </div>""", unsafe_allow_html=True)
+
+            with _ec2:
+                st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+
+                # Only show Paper Buy for ENTER NOW signals
+                _em_sym     = _em['sym_clean']
+                _em_entry   = _em['curr_price']
+                _em_sl      = _em['open_price']   # SL = open price (first candle low)
+                _em_target  = _em['target_px']
+                _em_gap_amt = _em['open_price'] - _em['prev_close']
+                # Qty from capital and risk (risk = distance from entry to SL)
+                _em_risk_d  = max(_em_entry - _em_sl, 0.01)
+                _em_qty     = max(1, int((capital * risk_pct / 100) / _em_risk_d))
+
+                if 'ENTER' in _em['action']:
+                    if st.button(
+                        f"✅ Paper Buy",
+                        key=f"em_paper_buy_{_em_sym}_{_rank_em}",
+                        use_container_width=True,
+                        type="primary",
+                    ):
+                        _port = load_portfolio()
+                        _already = any(
+                            p.get('symbol') == _em_sym and p.get('status') == 'OPEN'
+                            for p in _port
+                        )
+                        if _already:
+                            st.warning(f"⚠️ Already open: {_em_sym}")
+                        else:
+                            _port.append({
+                                'symbol':      _em_sym,
+                                'status':      'OPEN',
+                                'entry':       round(_em_entry, 2),
+                                'qty':         _em_qty,
+                                'stop_loss':   round(_em_sl, 2),
+                                't1':          round(_em_target, 2),
+                                't2':          round(_em_target + _em_gap_amt * 0.5, 2),
+                                't3':          0, 't4': 0,
+                                'investment':  round(_em_entry * _em_qty, 2),
+                                'actual_cost': round(_em_entry * _em_qty, 2),
+                                'timeframe':   '1min — Early Mover',
+                                'date':        ist_now().strftime('%d %b %Y %H:%M'),
+                                'score':       0,
+                                'verdict':     _em['action'],
+                                'gap_pct':     _em['gap_pct'],
+                                'vol_ratio':   _em['vol_x'],
+                                'source':      'early_movers',
+                            })
+                            save_portfolio(_port)
+                            st.session_state['paper_portfolio'] = _port
+                            st.success(
+                                f"✅ Bought {_em_qty} × {_em_sym} @ ₹{_em_entry:,.2f} · "
+                                f"SL ₹{_em_sl:,.2f} · T1 ₹{_em_target:,.2f}"
+                            )
+                            st.rerun()
+                else:
+                    if st.button(f"🔬 Analyse", key=f"em_analyse_{_em_sym}_{_rank_em}",
+                                 use_container_width=True):
+                        st.session_state['_focus_stock'] = _em_sym
+                        st.session_state['active_page']  = "📊  Scanner"
+                        st.rerun()
+
+        # ── Fading stocks ─────────────────────────────────
+        _fading = [r for r in _em_results if 'FADING' in r['action']]
+        if _fading:
+            st.markdown("<hr style='border:none;border-top:1px solid #e2e8f0;margin:12px 0'>",
+                        unsafe_allow_html=True)
+            st.markdown(
+                f"<div style='font-size:13px;font-weight:700;color:#dc2626;margin-bottom:8px'>"
+                f"⚠️ {len(_fading)} stocks gap-up criteria met but now FADING — avoid</div>",
+                unsafe_allow_html=True)
+            for _fd in _fading:
+                _fd_warn = " · 🏦 Banking pinning" if (_is_expiry and _fd['is_banking']) else ""
+                st.markdown(
+                    f"<div style='background:#fff5f5;border:1px solid #fecaca;"
+                    f"border-radius:8px;padding:8px 14px;margin-bottom:4px;"
+                    f"display:flex;justify-content:space-between;font-size:12px'>"
+                    f"<span style='font-weight:700;color:#dc2626'>{_fd['sym_clean']}</span>"
+                    f"<span style='color:#dc2626'>Gap +{_fd['gap_pct']:.2f}% but "
+                    f"{_fd['fade_pct']:.2f}% below open{_fd_warn}</span>"
+                    f"</div>", unsafe_allow_html=True)
+
+        # ── Refresh ───────────────────────────────────────
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+        if st.button("🔄 Refresh Early Movers", key="em_refresh",
+                     use_container_width=True):
+            st.session_state.pop('early_movers', None)
+            st.rerun()
+
+
+
+    # ── How it works explanation ──────────────────────────
+    _now_em    = ist_now()
+    _tm_em     = _now_em.hour * 60 + _now_em.minute
+    _mkt_start = _now_em.replace(hour=9, minute=15, second=0, microsecond=0)
+    try:
+        _mins_since = int((_now_em - _mkt_start.astimezone(_now_em.tzinfo)).total_seconds() / 60)
+    except Exception:
+        _mins_since = 999
+
+    # Window status
+    if not market_open():
+        _em_status     = "🔴 Market Closed — Run at 9:15 AM for live results"
+        _em_status_clr = "#dc2626"
+        _em_status_bg  = "#fef2f2"
+    elif _mins_since <= 15:
+        _em_status     = f"🟢 PRIME WINDOW — {_mins_since} min since open · Best time to catch moves"
+        _em_status_clr = "#15803d"
+        _em_status_bg  = "#f0fdf4"
+    elif _mins_since <= 30:
+        _em_status     = f"🟡 Good Window — {_mins_since} min since open · Most moves already started"
+        _em_status_clr = "#d97706"
+        _em_status_bg  = "#fffbeb"
+    else:
+        _em_status     = f"⚪ Late — {_mins_since} min since open · Early movers already ran · Use normal scanner"
+        _em_status_clr = "#64748b"
+        _em_status_bg  = "#f8fafc"
 if _show_portfolio:
     st.markdown("""
     <div class='topbar'>
@@ -5752,6 +7913,19 @@ if _show_portfolio:
             st.success(f"🤖 AUTO SELL — {sym_c} @ ₹{cur:,.2f} · {_auto_reason} · "
                        f"P&L: {pl_sign}₹{unreal:,.2f} ({pl_sign}{unreal_pct:.2f}%)")
             st.rerun()
+
+        # ── SL hit urgent banner ───────────────────────────
+        _pf_sl_hit = sl > 0 and cur <= sl
+        if _pf_sl_hit:
+            st.markdown(
+                f"<div style='background:#7f1d1d;border:2px solid #dc2626;"
+                f"border-radius:12px;padding:12px 18px;margin-bottom:8px'>"
+                f"<div style='font-size:15px;font-weight:800;color:#fca5a5'>"
+                f"🛑 STOP LOSS HIT — EXIT {sym_c} IMMEDIATELY</div>"
+                f"<div style='font-size:12px;color:#fca5a5;margin-top:4px'>"
+                f"Current ₹{cur:,.2f} · SL was ₹{sl:,.2f} · "
+                f"Loss: ₹{abs(unreal):,.0f} · Click Square Off below</div>"
+                f"</div>", unsafe_allow_html=True)
 
         # ── Position card ──
         with st.container():
