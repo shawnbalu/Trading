@@ -559,6 +559,26 @@ def run_breakout_screener(selected_stocks, interval, kite, port):
                 for bo in bos:
                     _add_alert(sym_clean, bo['type'], bo['msg'], price, bo['icon'])
                 best = max(bos, key=lambda x: x['score'])
+                # Extract first candle data for accurate SL/target calculation
+                try:
+                    import pytz as _ptz_orb
+                    _ist_orb   = _ptz_orb.timezone('Asia/Kolkata')
+                    _today_orb = datetime.now(_ist_orb).date()
+                    _idx_orb   = pd.to_datetime(df.index)
+                    if _idx_orb.tzinfo is None:
+                        _idx_orb = _idx_orb.tz_localize('UTC').tz_convert('Asia/Kolkata')
+                    else:
+                        _idx_orb = _idx_orb.tz_convert('Asia/Kolkata')
+                    _today_orb_df = df[_idx_orb.date == _today_orb]
+                    _first_orb    = _today_orb_df.iloc[0] if len(_today_orb_df) > 0 else df.iloc[-1]
+                    _first_low    = float(_first_orb['Low'])
+                    _first_high   = float(_first_orb['High'])
+                    _orb_rng      = round(_first_high - _first_low, 2)
+                except Exception:
+                    _first_low  = round(price * 0.995, 2)
+                    _first_high = round(price * 1.005, 2)
+                    _orb_rng    = round(price * 0.005, 2)
+
                 results.append({
                     'symbol':    symbol,
                     'sym_clean': sym_clean,
@@ -570,6 +590,9 @@ def run_breakout_screener(selected_stocks, interval, kite, port):
                     'best':      best,
                     'df':        df,
                     'src':       src,
+                    'first_low':  _first_low,
+                    'first_high': _first_high,
+                    'orb_range':  _orb_rng,
                 })
 
             if (idx + 1) % 25 == 0:
@@ -2333,11 +2356,15 @@ def get_intraday_trade_plan(df, capital, risk_pct):
         rps       = round(entry * 0.005, 2)   # 0.5% fallback
         stop_loss = round(entry - rps, 2)
 
-    # ── Intraday targets: 0.5×, 1×, 1.5×, 2× ATR  (small but achievable) ──
-    t1 = round(entry + rps * 0.5, 2)   # R:R 0.5:1 — quick scalp
-    t2 = round(entry + rps * 1.0, 2)   # R:R 1:1
-    t3 = round(entry + rps * 1.5, 2)   # R:R 1.5:1
-    t4 = round(entry + rps * 2.0, 2)   # R:R 2:1 — stretch target
+    # ── Intraday targets: 1×, 1.5×, 2×, 3× risk ──────────────
+    # T1 raised from 0.5R → 1.0R so R:R is at least 1:1 at first exit
+    # Backtest showed R:R of 1.06 at T1 — barely profitable at 51% win rate
+    # At 1.0R T1: win rate of 51% gives positive expectancy
+    # At 1.5R T2: exit 25% more — trail SL to entry after T1
+    t1 = round(entry + rps * 1.0, 2)   # R:R 1:1   — first target, book 50%
+    t2 = round(entry + rps * 1.5, 2)   # R:R 1.5:1 — move SL to entry
+    t3 = round(entry + rps * 2.0, 2)   # R:R 2:1   — trail SL to T1
+    t4 = round(entry + rps * 3.0, 2)   # R:R 3:1   — let it run
 
     ra  = capital * (risk_pct / 100)
     ps  = max(1, int(ra / rps))
@@ -2364,11 +2391,11 @@ def get_intraday_trade_plan(df, capital, risk_pct):
 
     rows = []
     for label, price in [
-        ("T1 — Scalp (0.5R)",  t1),
-        ("T2 — Target (1R)",   t2),
-        ("T3 — Extended (1.5R)", t3),
-        ("T4 — Stretch (2R)",  t4),
-        ("Stop Loss",          stop_loss)
+        ("T1 — Target (1R)",      t1),
+        ("T2 — Extended (1.5R)",  t2),
+        ("T3 — Strong (2R)",      t3),
+        ("T4 — Stretch (3R)",     t4),
+        ("Stop Loss",             stop_loss)
     ]:
         sv, sc  = sell_ch_intraday(price, ps)
         gross   = round((price - entry) * ps, 2)
@@ -7009,12 +7036,13 @@ if _show_orb:
                 _orb_sym    = _bo_r['sym_clean']
                 _orb_entry  = _bo_r['price']
                 _orb_prev   = _bo_r['prev_close']
-                # SL = below first candle low (approx open price - 0.5%)
-                _orb_sl     = round(_orb_entry * 0.995, 2)
-                # Target = 1.5× the ORB range above entry
                 _orb_range  = _bo_r.get('orb_range', _orb_entry * 0.005)
-                _orb_t1     = round(_orb_entry + _orb_range * 1.5, 2)
+                # SL = first candle low (real support level, not fixed %)
+                _orb_sl     = round(_bo_r.get('first_low', _orb_entry * 0.995), 2)
                 _orb_risk_d = max(_orb_entry - _orb_sl, 0.01)
+                # Targets: 1R, 2R, 3R from entry (minimum 1:1 R:R at T1)
+                _orb_t1     = round(_orb_entry + _orb_risk_d * 1.0, 2)  # R:R 1:1
+                _orb_t2     = round(_orb_entry + _orb_risk_d * 2.0, 2)  # R:R 2:1
                 _orb_qty    = max(1, int((capital * risk_pct / 100) / _orb_risk_d))
 
                 _orb_is_buy = _bo_r.get('best', {}).get('score', 0) >= 60
@@ -7421,8 +7449,13 @@ if _show_earlymovers:
                 _strength = round(_gap_pct * _vol_x, 1)
 
                 # ── Target calculation ────────────────────
-                _tgt_mult   = _expiry_info['target_multiplier'] if is_expiry_day else 1.5
-                _target_px  = round(_open_price + (_open_price - _prev_close) * _tgt_mult, 2)
+                _gap_amt    = _open_price - _prev_close
+                # Normal day: T1=2×gap, T2=3×gap, T3=4×gap (raised from 1.5×)
+                # Expiry day: T1=0.5×gap — volatile, take profit quickly
+                _tgt_mult   = _expiry_info['target_multiplier'] if is_expiry_day else 2.0
+                _target_px  = round(_open_price + _gap_amt * _tgt_mult, 2)
+                _target_t2  = round(_open_price + _gap_amt * (_tgt_mult + 1.0), 2)
+                _target_t3  = round(_open_price + _gap_amt * (_tgt_mult + 2.0), 2)
                 _target_lbl = f"{_tgt_mult}× gap {'(expiry reduced)' if is_expiry_day else ''}"
 
                 # ── Action label ──────────────────────────
@@ -7482,7 +7515,10 @@ if _show_earlymovers:
                     'candle_detail':_candle_detail,
                     'time_blocked': _time_blocked,
                     'target_px':    _target_px,
+                    'target_t2':    _target_t2,
+                    'target_t3':    _target_t3,
                     'target_lbl':   _target_lbl,
+                    'gap_amt':      round(_gap_amt, 2),
                     'gap_fill_prob':_expiry_info['gap_fill_prob'] if is_expiry_day else 30,
                 })
 
@@ -7709,9 +7745,11 @@ if _show_earlymovers:
                 # Only show Paper Buy for ENTER NOW signals
                 _em_sym     = _em['sym_clean']
                 _em_entry   = _em['curr_price']
-                _em_sl      = _em['open_price']   # SL = open price (first candle low)
-                _em_target  = _em['target_px']
-                _em_gap_amt = _em['open_price'] - _em['prev_close']
+                _em_sl      = _em['open_price']   # SL = open price (gap must hold)
+                _em_target  = _em['target_px']    # T1 = 2× gap
+                _em_t2      = _em.get('target_t2', _em_target)   # T2 = 3× gap
+                _em_t3      = _em.get('target_t3', _em_target)   # T3 = 4× gap
+                _em_gap_amt = _em.get('gap_amt', _em['open_price'] - _em['prev_close'])
                 # Qty from capital and risk (risk = distance from entry to SL)
                 _em_risk_d  = max(_em_entry - _em_sl, 0.01)
                 _em_qty     = max(1, int((capital * risk_pct / 100) / _em_risk_d))
@@ -7738,7 +7776,8 @@ if _show_earlymovers:
                                 'qty':         _em_qty,
                                 'stop_loss':   round(_em_sl, 2),
                                 't1':          round(_em_target, 2),
-                                't2':          round(_em_target + _em_gap_amt * 0.5, 2),
+                                't2':          round(_em_t2, 2),
+                                't3':          round(_em_t3, 2),
                                 't3':          0, 't4': 0,
                                 'investment':  round(_em_entry * _em_qty, 2),
                                 'actual_cost': round(_em_entry * _em_qty, 2),
