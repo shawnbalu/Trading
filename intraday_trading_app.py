@@ -51,6 +51,12 @@ import pytz
 
 os.environ["YFINANCE_CACHE_DIR"] = tempfile.gettempdir()
 
+# ── Global in-memory data cache ───────────────────────────
+# Prevents re-fetching same stock within same scan session.
+# Key = symbol_interval_timebucket  Value = (df, source)
+# Cleared at start of each new scan run.
+_DATA_CACHE: dict = {}
+
 # ── Zerodha Kite API ──────────────────────────────────────
 try:
     from kiteconnect import KiteConnect
@@ -1178,7 +1184,36 @@ POPULAR_STOCKS = list([
     "ZEEL.NS", "ZENSARTECH.NS", "ZENTEC.NS", "ZFCVINDIA.NS",
 ])
 
-# ── Priority scan stocks — scanned FIRST for faster signals ──
+# ── Early Mover stocks — 100 most active gap-up candidates ──
+# Used by Early Movers and ORB Scanner "Top 100" universe
+# Stocks most likely to gap up on news, results, global cues
+EARLY_MOVER_STOCKS = sorted(set([
+    # Nifty 50 — all gap candidates
+    "HDFCBANK.NS","RELIANCE.NS","ICICIBANK.NS","TCS.NS","INFY.NS",
+    "BHARTIARTL.NS","KOTAKBANK.NS","AXISBANK.NS","SBIN.NS","LT.NS",
+    "HINDUNILVR.NS","BAJFINANCE.NS","MARUTI.NS","HCLTECH.NS","SUNPHARMA.NS",
+    "TITAN.NS","WIPRO.NS","NTPC.NS","POWERGRID.NS","ULTRACEMCO.NS",
+    "TECHM.NS","TATAMOTORS.NS","BAJAJFINSV.NS","NESTLEIND.NS","GRASIM.NS",
+    "ADANIPORTS.NS","COALINDIA.NS","JSWSTEEL.NS","TATASTEEL.NS","ONGC.NS",
+    "BPCL.NS","HEROMOTOCO.NS","APOLLOHOSP.NS","CIPLA.NS","DRREDDY.NS",
+    "EICHERMOT.NS","TATACONSUM.NS","ADANIENT.NS","HINDALCO.NS","M&M.NS",
+    "BAJAJ-AUTO.NS","TRENT.NS","VEDL.NS","SHRIRAMFIN.NS","INDUSINDBK.NS",
+    "HDFCLIFE.NS","BRITANNIA.NS","DIVISLAB.NS","ASIANPAINT.NS","SBICARD.NS",
+    # High-vol midcap — frequent gap plays
+    "ADANIPOWER.NS","ADANIGREEN.NS","RVNL.NS","IRFC.NS","HUDCO.NS",
+    "HAL.NS","BEL.NS","BHEL.NS","SAIL.NS","RECLTD.NS","PFC.NS",
+    "SJVN.NS","NHPC.NS","SUZLON.NS","YESBANK.NS","IDEA.NS",
+    "PNB.NS","BANKBARODA.NS","RBLBANK.NS","FEDERALBNK.NS",
+    "IDFCFIRSTB.NS","AUBANK.NS","BANDHANBNK.NS",
+    "PERSISTENT.NS","LTTS.NS","COFORGE.NS","MPHASIS.NS","OFSS.NS",
+    "KPITTECH.NS","TATAELXSI.NS","TATAPOWER.NS",
+    "ATGL.NS","IGL.NS","MGL.NS","GAIL.NS","PETRONET.NS",
+    "DIXON.NS","JIOFIN.NS","ABCAPITAL.NS","MUTHOOTFIN.NS","ZOMATO.NS",
+    "GRAPHITE.NS","AARTIIND.NS","LODHA.NS","DLF.NS","ANANTRAJ.NS",
+    "APARINDS.NS","ONESOURCE.NS","OFSS.NS",
+]))
+
+
 # These 60 stocks are highest volume, most liquid, move first.
 # Scanning them first shows results in ~20s instead of 90s.
 PRIORITY_STOCKS = sorted(set([
@@ -1707,6 +1742,7 @@ def _cache_key(symbol, interval):
     else:
         _bucket = _now.strftime('%Y%m%d_%H')
     return f"{symbol}_{interval}_{_bucket}"
+
 
 def fetch_intraday(symbol, interval="1minute", period="1d", kite=None):
     """
