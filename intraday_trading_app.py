@@ -433,8 +433,8 @@ def detect_opening_breakout(df, symbol, price, prev_close):
         last_vol_ratio  = last_vol  / vol_ma
         chg_pct         = ((last_close - prev_close) / prev_close * 100) if prev_close > 0 else 0
 
-        # Rule 1 — Opening Volume Explosion (≥5× on first candle, bullish)
-        if first_vol_ratio >= 5.0 and first_close > prev_close:
+        # Rule 1 — Opening Volume Explosion (≥3× on first candle, bullish)
+        if first_vol_ratio >= 3.0 and first_close > prev_close:
             breakouts.append({
                 'type':   'ORB_VOL',
                 'icon':   '🚀',
@@ -446,8 +446,8 @@ def detect_opening_breakout(df, symbol, price, prev_close):
                 'action': 'STRONG BUY — Enter now, do not wait for indicators to confirm',
             })
 
-        # Rule 2 — Gap & Hold (>1.5% gap, holds above, volume confirming)
-        if chg_pct >= 1.5 and last_close >= first_close * 0.998 and last_vol_ratio >= 2.0:
+        # Rule 2 — Gap & Hold (>1.5% gap OR volume confirming, holding above open)
+        if chg_pct >= 1.5 and last_close >= first_close * 0.998 and last_vol_ratio >= 1.5:
             breakouts.append({
                 'type':   'ORB_GAP',
                 'icon':   '📈',
@@ -460,8 +460,8 @@ def detect_opening_breakout(df, symbol, price, prev_close):
             })
 
         # Rule 3 — VWAP Reclaim (price was below VWAP, crossed above with volume)
-        if (vwap > 0 and last_close > vwap and mins_open <= 30 and
-                last_vol_ratio >= 2.0 and first_close <= vwap * 1.003):
+        if (vwap > 0 and last_close > vwap and mins_open <= 45 and
+                last_vol_ratio >= 1.5 and first_close <= vwap * 1.003):
             breakouts.append({
                 'type':   'ORB_VWAP',
                 'icon':   '💛',
@@ -473,8 +473,8 @@ def detect_opening_breakout(df, symbol, price, prev_close):
                 'action': 'BUY — Strongest intraday entry. Stop below VWAP.',
             })
 
-        # Rule 4 — ORB High Breakout (price breaks first 5-min candle high)
-        if (last_close > first_high * 1.001 and last_vol_ratio >= 1.5 and mins_open <= 45):
+        # Rule 4 — ORB High Breakout (price breaks first candle high, within 90 min)
+        if (last_close > first_high * 1.001 and last_vol_ratio >= 1.2 and mins_open <= 90):
             orb_move = (last_close - first_high) / first_high * 100
             breakouts.append({
                 'type':   'ORB_HIGH',
@@ -492,7 +492,7 @@ def detect_opening_breakout(df, symbol, price, prev_close):
             last3       = today_df.tail(3)
             all_bull    = all(float(r['Close']) > float(r['Open']) for _, r in last3.iterrows())
             vr3         = float(last3['Volume'].mean()) / vol_ma
-            if all_bull and vr3 >= 1.5 and chg_pct >= 0.5:
+            if all_bull and vr3 >= 1.2 and chg_pct >= 0.5:
                 breakouts.append({
                     'type':   'ORB_MOMENTUM',
                     'icon':   '⚡',
@@ -1108,122 +1108,75 @@ div[data-testid="stSidebar"] .stButton > button {
 # ─────────────────────────────────────────────
 #  STOCK UNIVERSE
 # ─────────────────────────────────────────────
-POPULAR_STOCKS = sorted(list(set([
-    "360ONE.NS","3MINDIA.NS","AADHARHFC.NS","AARTIIND.NS","AAVAS.NS","ABB.NS","ABBOTINDIA.NS","ABCAPITAL.NS",
-    "ABFRL.NS","ABLBL.NS","ABREL.NS","ABSLAMC.NS","ACC.NS","ACE.NS","ACMESOLAR.NS","ADANIENSOL.NS",
-    "ADANIENT.NS","ADANIGREEN.NS","ADANIPORTS.NS","ADANIPOWER.NS","AEGISLOG.NS","AEGISVOPAK.NS","AFCONS.NS","AFFLE.NS",
-    "AGARWALEYE.NS","AIAENG.NS","AIIL.NS","AJANTPHARM.NS","AKUMS.NS","AKZOINDIA.NS","ALKEM.NS","ALKYLAMINE.NS",
-    "ALOKINDS.NS","AMBER.NS","AMBUJACEM.NS","ANANDRATHI.NS","ANANTRAJ.NS","ANGELONE.NS","APARINDS.NS","APLAPOLLO.NS",
-    "APLLTD.NS","APOLLOHOSP.NS","APOLLOTYRE.NS","APTUS.NS","ARE&M.NS","ASAHIINDIA.NS","ASHOKLEY.NS","ASIANPAINT.NS",
-    "ASTERDM.NS","ASTRAL.NS","ASTRAZEN.NS","ATGL.NS","ATHERENERG.NS","ATUL.NS","AUBANK.NS","AUROPHARMA.NS",
-    "AWL.NS","AXISBANK.NS","BAJAJ-AUTO.NS","BAJAJFINSV.NS","BAJAJHFL.NS","BAJAJHLDNG.NS","BAJFINANCE.NS","BALKRISIND.NS",
-    "BALRAMCHIN.NS","BANDHANBNK.NS","BANKBARODA.NS","BANKINDIA.NS","BASF.NS","BATAINDIA.NS","BAYERCROP.NS","BBTC.NS",
-    "BDL.NS","BEL.NS","BEML.NS","BERGEPAINT.NS","BHARATFORG.NS","BHARTIARTL.NS","BHARTIHEXA.NS","BHEL.NS",
-    "BIKAJI.NS","BIOCON.NS","BLS.NS","BLUEDART.NS","BLUEJET.NS","BLUESTARCO.NS","BOSCHLTD.NS","BPCL.NS",
-    "BRIGADE.NS","BRITANNIA.NS","BSE.NS","BSOFT.NS","CAMPUS.NS","CAMS.NS","CANBK.NS","CANFINHOME.NS",
-    "CAPLIPOINT.NS","CARBORUNIV.NS","CASTROLIND.NS","CCL.NS","CDSL.NS","CEATLTD.NS","CENTRALBK.NS","CENTURYPLY.NS",
-    "CERA.NS","CESC.NS","CGCL.NS","CGPOWER.NS","CHALET.NS","CHAMBLFERT.NS","CHENNPETRO.NS","CHOICEIN.NS",
-    "CHOLAFIN.NS","CHOLAHLDNG.NS","CIPLA.NS","CLEAN.NS","COALINDIA.NS","COCHINSHIP.NS","COFORGE.NS","COHANCE.NS",
-    "COLPAL.NS","CONCOR.NS","CONCORDBIO.NS","COROMANDEL.NS","CRAFTSMAN.NS","CREDITACC.NS","CRISIL.NS","CROMPTON.NS",
-    "CUB.NS","CUMMINSIND.NS","CYIENT.NS","DABUR.NS","DALBHARAT.NS","DATAPATTNS.NS","DBREALTY.NS","DCMSHRIRAM.NS",
-    "DEEPAKFERT.NS","DEEPAKNTR.NS","DELHIVERY.NS","DEVYANI.NS","DIVISLAB.NS","DIXON.NS","DLF.NS","DMART.NS",
-    "DOMS.NS","DRREDDY.NS","ECLERX.NS","EICHERMOT.NS","EIDPARRY.NS","EIHOTEL.NS","ELECON.NS","ELGIEQUIP.NS",
-    "EMAMILTD.NS","EMCURE.NS","ENDURANCE.NS","ENGINERSIN.NS","ENRIN.NS","ERIS.NS","ESCORTS.NS","ETERNAL.NS",
-    "EXIDEIND.NS","FACT.NS","FEDERALBNK.NS","FINCABLES.NS","FINPIPE.NS","FIRSTCRY.NS","FIVESTAR.NS","FLUOROCHEM.NS",
-    "FORCEMOT.NS","FORTIS.NS","FSL.NS","GAIL.NS","GESHIP.NS","GICRE.NS","GILLETTE.NS","GLAND.NS",
-    "GLAXO.NS","GLENMARK.NS","GMDCLTD.NS","GMRAIRPORT.NS","GODFRYPHLP.NS","GODIGIT.NS","GODREJAGRO.NS","GODREJCP.NS",
-    "GODREJIND.NS","GODREJPROP.NS","GPIL.NS","GRANULES.NS","GRAPHITE.NS","GRASIM.NS","GRAVITA.NS","GRSE.NS",
-    "GSPL.NS","GUJGASLTD.NS","GVT&D.NS","HAL.NS","HAPPSTMNDS.NS","HAVELLS.NS","HBLENGINE.NS","HCLTECH.NS",
-    "HDFCAMC.NS","HDFCBANK.NS","HDFCLIFE.NS","HEG.NS","HEROMOTOCO.NS","HEXT.NS","HFCL.NS","HINDALCO.NS",
-    "HINDCOPPER.NS","HINDPETRO.NS","HINDUNILVR.NS","HINDZINC.NS","HOMEFIRST.NS","HONASA.NS","HONAUT.NS","HSCL.NS",
-    "HUDCO.NS","HYUNDAI.NS","ICICIBANK.NS","ICICIGI.NS","ICICIPRULI.NS","IDBI.NS","IDEA.NS","IDFCFIRSTB.NS",
-    "IEX.NS","IFCI.NS","IGIL.NS","IGL.NS","IIFL.NS","IKS.NS","INDGN.NS","INDHOTEL.NS",
-    "INDIACEM.NS","INDIAMART.NS","INDIANB.NS","INDIGO.NS","INDUSINDBK.NS","INDUSTOWER.NS","INFY.NS","INOXINDIA.NS",
-    "INOXWIND.NS","INTELLECT.NS","IOB.NS","IOC.NS","IPCALAB.NS","IRB.NS","IRCON.NS","IRCTC.NS",
-    "IREDA.NS","IRFC.NS","ITC.NS","ITCHOTELS.NS","ITI.NS","J&KBANK.NS","JBCHEPHARM.NS","JBMA.NS",
-    "JINDALSAW.NS","JINDALSTEL.NS","JIOFIN.NS","JKCEMENT.NS","JKTYRE.NS","JMFINANCIL.NS","JPPOWER.NS","JSL.NS",
-    "JSWCEMENT.NS","JSWENERGY.NS","JSWINFRA.NS","JSWSTEEL.NS","JUBLFOOD.NS","JUBLINGREA.NS","JUBLPHARMA.NS","JWL.NS",
-    "JYOTHYLAB.NS","JYOTICNC.NS","KAJARIACER.NS","KALYANKJIL.NS","KARURVYSYA.NS","KAYNES.NS","KEC.NS","KEI.NS",
-    "KFINTECH.NS","KIMS.NS","KIRLOSBROS.NS","KIRLOSENG.NS","KOTAKBANK.NS","KPIL.NS","KPITTECH.NS","KPRMILL.NS",
-    "KSB.NS","LALPATHLAB.NS","LATENTVIEW.NS","LAURUSLABS.NS","LEMONTREE.NS","LICHSGFIN.NS","LICI.NS","LINDEINDIA.NS",
-    "LLOYDSME.NS","LODHA.NS","LT.NS","LTF.NS","LTFOODS.NS","LTM.NS","LTTS.NS","LUPIN.NS",
-    "M&M.NS","M&MFIN.NS","MAHABANK.NS","MAHSCOOTER.NS","MAHSEAMLES.NS","MANAPPURAM.NS","MANKIND.NS","MANYAVAR.NS",
-    "MAPMYINDIA.NS","MARICO.NS","MARUTI.NS","MAXHEALTH.NS","MAZDOCK.NS","MCX.NS","MEDANTA.NS","METROPOLIS.NS",
-    "MFSL.NS","MGL.NS","MINDACORP.NS","MMTC.NS","MOTHERSON.NS","MOTILALOFS.NS","MPHASIS.NS","MRF.NS",
-    "MRPL.NS","MSUMI.NS","MUTHOOTFIN.NS","NAM-INDIA.NS","NATCOPHARM.NS","NATIONALUM.NS","NAUKRI.NS","NAVA.NS",
-    "NAVINFLUOR.NS","NBCC.NS","NCC.NS","NESTLEIND.NS","NETWEB.NS","NEULANDLAB.NS","NEWGEN.NS","NH.NS",
-    "NHPC.NS","NIACL.NS","NIVABUPA.NS","NLCINDIA.NS","NMDC.NS","NSLNISP.NS","NTPC.NS","NTPCGREEN.NS",
-    "NUVAMA.NS","NUVOCO.NS","NYKAA.NS","OBEROIRLTY.NS","OFSS.NS","OIL.NS","OLAELEC.NS","OLECTRA.NS",
-    "ONESOURCE.NS","ONGC.NS","PAGEIND.NS","PATANJALI.NS","PAYTM.NS","PCBL.NS","PERSISTENT.NS","PETRONET.NS",
-    "PFC.NS","PFIZER.NS","PGEL.NS","PGHH.NS","PHOENIXLTD.NS","PIDILITIND.NS","PIIND.NS","PNB.NS",
-    "PNBHOUSING.NS","POLICYBZR.NS","POLYCAB.NS","POLYMED.NS","POONAWALLA.NS","POWERGRID.NS","POWERINDIA.NS","PPLPHARMA.NS",
-    "PRAJIND.NS","PREMIERENE.NS","PRESTIGE.NS","PTCIL.NS","PVRINOX.NS","RADICO.NS","RAILTEL.NS","RAINBOW.NS",
-    "RAMCOCEM.NS","RBLBANK.NS","RCF.NS","RECLTD.NS","REDINGTON.NS","RELIANCE.NS","RELINFRA.NS","RHIM.NS",
-    "RITES.NS","RKFORGE.NS","RPOWER.NS","RRKABEL.NS","RVNL.NS","SAGILITY.NS","SAIL.NS","SAILIFE.NS",
-    "SAMMAANCAP.NS","SAPPHIRE.NS","SARDAEN.NS","SAREGAMA.NS","SBFC.NS","SBICARD.NS","SBILIFE.NS","SBIN.NS",
-    "SCHAEFFLER.NS","SCHNEIDER.NS","SCI.NS","SHREECEM.NS","SHRIRAMFIN.NS","SHYAMMETL.NS","SIEMENS.NS","SIGNATURE.NS",
-    "SJVN.NS","SOBHA.NS","SOLARINDS.NS","SONACOMS.NS","SONATSOFTW.NS","SRF.NS","STARHEALTH.NS","SUMICHEM.NS",
-    "SUNDARMFIN.NS","SUNDRMFAST.NS","SUNPHARMA.NS","SUNTV.NS","SUPREMEIND.NS","SUZLON.NS","SWANCORP.NS","SWIGGY.NS",
-    "SYNGENE.NS","SYRMA.NS","TARIL.NS","TATACHEM.NS","TATACOMM.NS","TATACONSUM.NS","TATAELXSI.NS","TATAINVEST.NS",
-    "TATAPOWER.NS","TATASTEEL.NS","TATATECH.NS","TBOTEK.NS","TCS.NS","TECHM.NS","TECHNOE.NS","TEJASNET.NS",
-    "THELEELA.NS","THERMAX.NS","TIINDIA.NS","TIMKEN.NS","TITAGARH.NS","TITAN.NS","TMPV.NS","TORNTPHARM.NS",
-    "TORNTPOWER.NS","TRENT.NS","TRIDENT.NS","TRITURBINE.NS","TRIVENI.NS","TTML.NS","TVSMOTOR.NS","UBL.NS",
-    "UCOBANK.NS","ULTRACEMCO.NS","UNIONBANK.NS","UNITDSPR.NS","UNOMINDA.NS","UPL.NS","USHAMART.NS","UTIAMC.NS",
-    "VBL.NS","VEDL.NS","VENTIVE.NS","VGUARD.NS","VIJAYA.NS","VMM.NS","VOLTAS.NS","VTL.NS",
-    "WAAREEENER.NS","WELCORP.NS","WELSPUNLIV.NS","WHIRLPOOL.NS","WIPRO.NS","WOCKPHARMA.NS","YESBANK.NS","ZEEL.NS",
-    "ZENSARTECH.NS","ZENTEC.NS","ZFCVINDIA.NS","ZYDUSLIFE.NS",
-])))
+# ── Tier 1: Nifty 50 — EXCELLENT liquidity, highest institutional activity ──
+# Scanned first — best signals appear within 9 seconds
+POPULAR_STOCKS = list([
+    "HDFCBANK.NS", "RELIANCE.NS", "ICICIBANK.NS", "TCS.NS", "INFY.NS", "BHARTIARTL.NS", "KOTAKBANK.NS", "AXISBANK.NS",
+    "SBIN.NS", "LT.NS", "HINDUNILVR.NS", "BAJFINANCE.NS", "ASIANPAINT.NS", "MARUTI.NS", "HCLTECH.NS", "SUNPHARMA.NS",
+    "TITAN.NS", "WIPRO.NS", "NTPC.NS", "POWERGRID.NS", "ULTRACEMCO.NS", "TECHM.NS", "BAJAJFINSV.NS", "NESTLEIND.NS",
+    "GRASIM.NS", "ADANIPORTS.NS", "COALINDIA.NS", "JSWSTEEL.NS", "TATASTEEL.NS", "ONGC.NS", "BPCL.NS", "HEROMOTOCO.NS",
+    "APOLLOHOSP.NS", "CIPLA.NS", "DRREDDY.NS", "DIVISLAB.NS", "EICHERMOT.NS", "SHRIRAMFIN.NS", "TATACONSUM.NS", "ADANIENT.NS",
+    "HINDALCO.NS", "INDUSINDBK.NS", "M&M.NS", "HDFCLIFE.NS", "SBICARD.NS", "BRITANNIA.NS", "BAJAJ-AUTO.NS", "TRENT.NS",
+    "VEDL.NS", "ADANIPOWER.NS", "ADANIGREEN.NS", "RVNL.NS", "IRFC.NS", "HUDCO.NS", "HAL.NS", "BEL.NS",
+    "BHEL.NS", "SAIL.NS", "RECLTD.NS", "PFC.NS", "SJVN.NS", "NHPC.NS", "SUZLON.NS", "YESBANK.NS",
+    "IDEA.NS", "PNB.NS", "BANKBARODA.NS", "RBLBANK.NS", "FEDERALBNK.NS", "IDFCFIRSTB.NS", "AUBANK.NS", "BANDHANBNK.NS",
+    "PERSISTENT.NS", "LTTS.NS", "COFORGE.NS", "MPHASIS.NS", "OFSS.NS", "KPITTECH.NS", "TATAELXSI.NS", "ATGL.NS",
+    "IGL.NS", "MGL.NS", "GAIL.NS", "PETRONET.NS", "TATAPOWER.NS", "TORNTPOWER.NS", "DIXON.NS", "JIOFIN.NS",
+    "ABCAPITAL.NS", "MUTHOOTFIN.NS", "NYKAA.NS", "PAYTM.NS", "ZYDUSLIFE.NS", "LUPIN.NS", "AUROPHARMA.NS", "LODHA.NS",
+    "DLF.NS", "OBEROIRLTY.NS", "GRAPHITE.NS", "AARTIIND.NS", "PRESTIGE.NS", "BRIGADE.NS", "IRCTC.NS", "HDFCAMC.NS",
 
-
-# ─────────────────────────────────────────────
-#  CORE ENGINE — INTRADAY DATA FETCH
-# ─────────────────────────────────────────────
-
-
-
-
-# ── Per-scan data cache (cleared on each new scan) ───────────────
-# Prevents re-fetching the same stock if user re-runs with same settings
-_DATA_CACHE: dict = {}
-
-# ── Early Mover Universe — 100 stocks ─────────────────────
-# Used ONLY by the Early Movers page.
-# Criteria for inclusion:
-#   1. Nifty 50 constituents (large cap, always liquid)
-#   2. High-beta stocks that move first on gap-up days
-#   3. High-volume intraday favorites (retail + institutional)
-#   4. Sector leaders for each of the 20 sectors
-# Why 100? At 1min data fetch = ~30-40 seconds total scan time.
-# 498 stocks = 90+ seconds — move already done by then.
-EARLY_MOVER_STOCKS = sorted(set([
-    # ── Nifty 50 core (large cap, always move with market) ─
-    "ADANIENT.NS","ADANIPORTS.NS","APOLLOHOSP.NS","ASIANPAINT.NS","AXISBANK.NS",
-    "BAJAJ-AUTO.NS","BAJAJFINSV.NS","BAJFINANCE.NS","BHARTIARTL.NS","BPCL.NS",
-    "BRITANNIA.NS","CIPLA.NS","COALINDIA.NS","DIVISLAB.NS","DRREDDY.NS",
-    "EICHERMOT.NS","HCLTECH.NS","HDFCBANK.NS","HDFCLIFE.NS","HEROMOTOCO.NS",
-    "HINDALCO.NS","HINDUNILVR.NS","ICICIBANK.NS","INDUSINDBK.NS","INFY.NS",
-    "ITC.NS","JSWSTEEL.NS","KOTAKBANK.NS","LT.NS","M&M.NS",
-    "MARUTI.NS","NESTLEIND.NS","NTPC.NS","ONGC.NS","POWERGRID.NS",
-    "RELIANCE.NS","SBIN.NS","SHRIRAMFIN.NS","SUNPHARMA.NS","TATACONSUM.NS",
-    "TATASTEEL.NS","TCS.NS","TECHM.NS","TITAN.NS","TRENT.NS",
-    "ULTRACEMCO.NS","WIPRO.NS","GRASIM.NS","BAJAJHLDNG.NS","TATAMOTORS.NS",
-
-    # ── High beta — move first and hardest on gap days ─────
-    "ADANIGREEN.NS","ADANIPOWER.NS","WAAREEENER.NS","SUZLON.NS","TATAPOWER.NS",
-    "IRFC.NS","RVNL.NS","NHPC.NS","BEL.NS","HAL.NS",
-    "RECLTD.NS","PFC.NS","HUDCO.NS","SJVN.NS","NTPCGREEN.NS",
-    "DIXON.NS","LTTS.NS","PERSISTENT.NS","COFORGE.NS","KPITTECH.NS",
-
-    # ── Intraday high-volume favorites ─────────────────────
-    "YESBANK.NS","IDEA.NS","RPOWER.NS","JPPOWER.NS","IREDA.NS",
-    "ANGELONE.NS","MOTILALOFS.NS","BSE.NS","MCX.NS","CDSL.NS",
-
-    # ── Sector leaders (one per sector, high volume) ───────
-    "HDFCAMC.NS","MUTHOOTFIN.NS","ICICIPRULI.NS","MPHASIS.NS","TVSMOTOR.NS",
-    "DLF.NS","GODREJPROP.NS","ANANTRAJ.NS","AMBUJACEM.NS","PIDILITIND.NS",
-    "HAVELLS.NS","POLYCAB.NS","TATACHEM.NS","VOLTAS.NS","LODHA.NS",
-    "PRESTIGE.NS","ABBOTINDIA.NS","ETERNAL.NS","SWIGGY.NS","KAYNES.NS","CHOLAFIN.NS",
-]))
+    # ── Tier 3: Active midcap — HIGH liquidity (49 stocks)
+    "AMBUJACEM.NS", "ACC.NS", "RAMCOCEM.NS", "JKCEMENT.NS", "SHREECEM.NS", "COROMANDEL.NS", "PIIND.NS", "UPL.NS",
+    "CHAMBLFERT.NS", "SRF.NS", "TATACHEM.NS", "SIEMENS.NS", "ABB.NS", "HAVELLS.NS", "CUMMINSIND.NS", "VOLTAS.NS",
+    "CROMPTON.NS", "TVSMOTOR.NS", "ESCORTS.NS", "ASHOKLEY.NS", "MOTHERSON.NS", "BALKRISIND.NS", "APOLLOTYRE.NS", "AFFLE.NS",
+    "HAPPSTMNDS.NS", "PVRINOX.NS", "DCMSHRIRAM.NS", "WELCORP.NS", "JBCHEPHARM.NS", "ANANTRAJ.NS", "SOBHA.NS", "GODREJPROP.NS",
+    "APTUS.NS", "ACMESOLAR.NS", "ABFRL.NS", "BIKAJI.NS", "NUVOCO.NS", "RADICO.NS", "IPCALAB.NS", "ALKEM.NS",
+    "TORNTPHARM.NS", "GLENMARK.NS", "MANKIND.NS", "KALYANKJIL.NS", "BAJAJHLDNG.NS", "GODREJCP.NS", "DABUR.NS", "MARICO.NS",
+    "COLPAL.NS", "360ONE.NS", "3MINDIA.NS", "AADHARHFC.NS", "AAVAS.NS", "ABBOTINDIA.NS", "ABLBL.NS", "ABREL.NS",
+    "ABSLAMC.NS", "ACE.NS", "ADANIENSOL.NS", "AEGISLOG.NS", "AEGISVOPAK.NS", "AFCONS.NS", "AGARWALEYE.NS", "AIAENG.NS",
+    "AIIL.NS", "AJANTPHARM.NS", "AKUMS.NS", "AKZOINDIA.NS", "ALKYLAMINE.NS", "ALOKINDS.NS", "AMBER.NS", "ANANDRATHI.NS",
+    "ANGELONE.NS", "APARINDS.NS", "APLAPOLLO.NS", "APLLTD.NS", "ARE&M.NS", "ASAHIINDIA.NS", "ASTERDM.NS", "ASTRAL.NS",
+    "ASTRAZEN.NS", "ATHERENERG.NS", "ATUL.NS", "AWL.NS", "BAJAJHFL.NS", "BALRAMCHIN.NS", "BANKINDIA.NS", "BASF.NS",
+    "BATAINDIA.NS", "BAYERCROP.NS", "BBTC.NS", "BDL.NS", "BEML.NS", "BERGEPAINT.NS", "BHARATFORG.NS", "BHARTIHEXA.NS",
+    "BIOCON.NS", "BLS.NS", "BLUEDART.NS", "BLUEJET.NS", "BLUESTARCO.NS", "BOSCHLTD.NS", "BSE.NS", "BSOFT.NS",
+    "CAMPUS.NS", "CAMS.NS", "CANBK.NS", "CANFINHOME.NS", "CAPLIPOINT.NS", "CARBORUNIV.NS", "CASTROLIND.NS", "CCL.NS",
+    "CDSL.NS", "CEATLTD.NS", "CENTRALBK.NS", "CENTURYPLY.NS", "CERA.NS", "CESC.NS", "CGCL.NS", "CGPOWER.NS",
+    "CHALET.NS", "CHENNPETRO.NS", "CHOICEIN.NS", "CHOLAFIN.NS", "CHOLAHLDNG.NS", "CLEAN.NS", "COCHINSHIP.NS", "COHANCE.NS",
+    "CONCOR.NS", "CONCORDBIO.NS", "CRAFTSMAN.NS", "CREDITACC.NS", "CRISIL.NS", "CUB.NS", "CYIENT.NS", "DALBHARAT.NS",
+    "DATAPATTNS.NS", "DBREALTY.NS", "DEEPAKFERT.NS", "DEEPAKNTR.NS", "DELHIVERY.NS", "DEVYANI.NS", "DMART.NS", "DOMS.NS",
+    "ECLERX.NS", "EIDPARRY.NS", "EIHOTEL.NS", "ELECON.NS", "ELGIEQUIP.NS", "EMAMILTD.NS", "EMCURE.NS", "ENDURANCE.NS",
+    "ENGINERSIN.NS", "ENRIN.NS", "ERIS.NS", "ETERNAL.NS", "EXIDEIND.NS", "FACT.NS", "FINCABLES.NS", "FINPIPE.NS",
+    "FIRSTCRY.NS", "FIVESTAR.NS", "FLUOROCHEM.NS", "FORCEMOT.NS", "FORTIS.NS", "FSL.NS", "GESHIP.NS", "GICRE.NS",
+    "GILLETTE.NS", "GLAND.NS", "GLAXO.NS", "GMDCLTD.NS", "GMRAIRPORT.NS", "GODFRYPHLP.NS", "GODIGIT.NS", "GODREJAGRO.NS",
+    "GODREJIND.NS", "GPIL.NS", "GRANULES.NS", "GRAVITA.NS", "GRSE.NS", "GSPL.NS", "GUJGASLTD.NS", "GVT&D.NS",
+    "HBLENGINE.NS", "HEG.NS", "HEXT.NS", "HFCL.NS", "HINDCOPPER.NS", "HINDPETRO.NS", "HINDZINC.NS", "HOMEFIRST.NS",
+    "HONASA.NS", "HONAUT.NS", "HSCL.NS", "HYUNDAI.NS", "ICICIGI.NS", "ICICIPRULI.NS", "IDBI.NS", "IEX.NS",
+    "IFCI.NS", "IGIL.NS", "IIFL.NS", "IKS.NS", "INDGN.NS", "INDHOTEL.NS", "INDIACEM.NS", "INDIAMART.NS",
+    "INDIANB.NS", "INDIGO.NS", "INDUSTOWER.NS", "INOXINDIA.NS", "INOXWIND.NS", "INTELLECT.NS", "IOB.NS", "IOC.NS",
+    "IRB.NS", "IRCON.NS", "IREDA.NS", "ITC.NS", "ITCHOTELS.NS", "ITI.NS", "J&KBANK.NS", "JBMA.NS",
+    "JINDALSAW.NS", "JINDALSTEL.NS", "JKTYRE.NS", "JMFINANCIL.NS", "JPPOWER.NS", "JSL.NS", "JSWCEMENT.NS", "JSWENERGY.NS",
+    "JSWINFRA.NS", "JUBLFOOD.NS", "JUBLINGREA.NS", "JUBLPHARMA.NS", "JWL.NS", "JYOTHYLAB.NS", "JYOTICNC.NS", "KAJARIACER.NS",
+    "KARURVYSYA.NS", "KAYNES.NS", "KEC.NS", "KEI.NS", "KFINTECH.NS", "KIMS.NS", "KIRLOSBROS.NS", "KIRLOSENG.NS",
+    "KPIL.NS", "KPRMILL.NS", "KSB.NS", "LALPATHLAB.NS", "LATENTVIEW.NS", "LAURUSLABS.NS", "LEMONTREE.NS", "LICHSGFIN.NS",
+    "LICI.NS", "LINDEINDIA.NS", "LLOYDSME.NS", "LTF.NS", "LTFOODS.NS", "LTM.NS", "M&MFIN.NS", "MAHABANK.NS",
+    "MAHSCOOTER.NS", "MAHSEAMLES.NS", "MANAPPURAM.NS", "MANYAVAR.NS", "MAPMYINDIA.NS", "MAXHEALTH.NS", "MAZDOCK.NS", "MCX.NS",
+    "MEDANTA.NS", "METROPOLIS.NS", "MFSL.NS", "MINDACORP.NS", "MMTC.NS", "MOTILALOFS.NS", "MRF.NS", "MRPL.NS",
+    "MSUMI.NS", "NAM-INDIA.NS", "NATCOPHARM.NS", "NATIONALUM.NS", "NAUKRI.NS", "NAVA.NS", "NAVINFLUOR.NS", "NBCC.NS",
+    "NCC.NS", "NETWEB.NS", "NEULANDLAB.NS", "NEWGEN.NS", "NH.NS", "NIACL.NS", "NIVABUPA.NS", "NLCINDIA.NS",
+    "NMDC.NS", "NSLNISP.NS", "NTPCGREEN.NS", "NUVAMA.NS", "OIL.NS", "OLAELEC.NS", "OLECTRA.NS", "ONESOURCE.NS",
+    "PAGEIND.NS", "PATANJALI.NS", "PCBL.NS", "PFIZER.NS", "PGEL.NS", "PGHH.NS", "PHOENIXLTD.NS", "PIDILITIND.NS",
+    "PNBHOUSING.NS", "POLICYBZR.NS", "POLYCAB.NS", "POLYMED.NS", "POONAWALLA.NS", "POWERINDIA.NS", "PPLPHARMA.NS", "PRAJIND.NS",
+    "PREMIERENE.NS", "PTCIL.NS", "RAILTEL.NS", "RAINBOW.NS", "RCF.NS", "REDINGTON.NS", "RELINFRA.NS", "RHIM.NS",
+    "RITES.NS", "RKFORGE.NS", "RPOWER.NS", "RRKABEL.NS", "SAGILITY.NS", "SAILIFE.NS", "SAMMAANCAP.NS", "SAPPHIRE.NS",
+    "SARDAEN.NS", "SAREGAMA.NS", "SBFC.NS", "SBILIFE.NS", "SCHAEFFLER.NS", "SCHNEIDER.NS", "SCI.NS", "SHYAMMETL.NS",
+    "SIGNATURE.NS", "SOLARINDS.NS", "SONACOMS.NS", "SONATSOFTW.NS", "STARHEALTH.NS", "SUMICHEM.NS", "SUNDARMFIN.NS", "SUNDRMFAST.NS",
+    "SUNTV.NS", "SUPREMEIND.NS", "SWANCORP.NS", "SWIGGY.NS", "SYNGENE.NS", "SYRMA.NS", "TARIL.NS", "TATACOMM.NS",
+    "TATAINVEST.NS", "TATATECH.NS", "TBOTEK.NS", "TECHNOE.NS", "TEJASNET.NS", "THELEELA.NS", "THERMAX.NS", "TIINDIA.NS",
+    "TIMKEN.NS", "TITAGARH.NS", "TMPV.NS", "TRIDENT.NS", "TRITURBINE.NS", "TRIVENI.NS", "TTML.NS", "UBL.NS",
+    "UCOBANK.NS", "UNIONBANK.NS", "UNITDSPR.NS", "UNOMINDA.NS", "USHAMART.NS", "UTIAMC.NS", "VBL.NS", "VENTIVE.NS",
+    "VGUARD.NS", "VIJAYA.NS", "VMM.NS", "VTL.NS", "WAAREEENER.NS", "WELSPUNLIV.NS", "WHIRLPOOL.NS", "WOCKPHARMA.NS",
+    "ZEEL.NS", "ZENSARTECH.NS", "ZENTEC.NS", "ZFCVINDIA.NS",
+])
 
 # ── Priority scan stocks — scanned FIRST for faster signals ──
 # These 60 stocks are highest volume, most liquid, move first.
@@ -2279,6 +2232,42 @@ def generate_intraday_signals(df):
 INTRADAY_STT_RATE  = 0.00025   # 0.025% on sell only (intraday STT)
 INTRADAY_BROK_RATE = 0.0003    # 0.03% capped ₹20
 
+def get_position_size_multiplier(rs_vs_nifty=0.0):
+    """
+    Returns (multiplier, label, color) based on market conditions.
+    Market conditions affect HOW MUCH to trade, not WHETHER to trade.
+
+    BULL + CALM/NORMAL:    100% — full size
+    BULL + HIGH VIX:        70% — reduce slightly
+    SIDEWAYS:               80% — moderate caution
+    BEAR + RS > 1.5%:       50% — half size, strong stock
+    BEAR + RS < 1.5%:       25% — quarter size, use shortlist RS gate
+    CRISIS VIX:             25% — minimal
+    """
+    _nifty = st.session_state.get('nifty_market_state', 'UNKNOWN')
+    _vix   = st.session_state.get('nifty_context', {}).get('vix_level', 'UNKNOWN')
+    _rs    = rs_vs_nifty or 0.0
+
+    if _vix == 'CRISIS':
+        return 0.25, '25% size — VIX Crisis', '#dc2626'
+    elif _vix == 'EXTREME':
+        return 0.35, '35% size — VIX Extreme', '#ea580c'
+    elif _nifty == 'BEAR':
+        if _rs >= 1.5:
+            return 0.50, '50% size — BEAR day (stock outperforming)', '#d97706'
+        else:
+            return 0.25, '25% size — BEAR day (weak RS)', '#dc2626'
+    elif _nifty == 'SIDEWAYS':
+        if _vix == 'HIGH':
+            return 0.60, '60% size — Sideways + High VIX', '#d97706'
+        return 0.80, '80% size — Sideways market', '#d97706'
+    elif _nifty == 'BULL':
+        if _vix == 'HIGH':
+            return 0.70, '70% size — Bull + High VIX', '#d97706'
+        return 1.00, '100% size — Full position', '#16a34a'
+    return 0.80, '80% size — Unknown conditions', '#64748b'
+
+
 def get_intraday_trade_plan(df, capital, risk_pct):
     latest = df.iloc[-1]
     entry  = float(latest['Close'])
@@ -2477,9 +2466,12 @@ def compute_intraday_pick_score(r):
     # ════════════════════════════════════════════
     # PRIORITY 1 — NIFTY MARKET FILTER
     # ════════════════════════════════════════════
+    # Penalty reduced on BEAR days — strong RS stocks
+    # can overcome the market headwind. Blanket -20
+    # was eliminating genuinely strong defensive stocks.
     _nifty_state = st.session_state.get('nifty_market_state', 'UNKNOWN')
     if _nifty_state == 'BEAR':
-        scores['Market_Filter'] = -20
+        scores['Market_Filter'] = -10   # reduced from -20
     elif _nifty_state == 'SIDEWAYS':
         scores['Market_Filter'] = -8
     elif _nifty_state == 'BULL':
@@ -2753,36 +2745,22 @@ def compute_intraday_pick_score(r):
     # ════════════════════════════════════════════
     # FINAL VERDICT WITH HARD CAPS
     # ════════════════════════════════════════════
+    # Architecture: Market conditions affect POSITION SIZE, not score threshold.
+    # Only VIX CRISIS/EXTREME get hard caps (genuine market breakdown).
+    # BEAR days: RS gate in shortlist handles selection.
+    # Position size multiplier computed separately and shown on card.
     total = max(0, sum(scores.values()))
 
-    # VIX Index caps — India calibrated + direction aware
-    # Key insight: VIX 20-25 on a BULL day = high volatility trending UP
-    # = best intraday setup. Only cap when VIX is high AND market is bearish.
     _vix_level   = st.session_state.get('nifty_context', {}).get('vix_level', 'UNKNOWN')
-    _vix_val_now = st.session_state.get('nifty_context', {}).get('vix', 0) or 0
     _nifty_state = st.session_state.get('nifty_market_state', 'UNKNOWN')
-    _bull_day    = _nifty_state == 'BULL'
 
-    if _vix_level == 'CRISIS':        # VIX > 30 — COVID/war level
-        total = min(total, 40)        # Near-total block regardless of direction
-    elif _vix_level == 'EXTREME':     # VIX 25-30 — serious fear
-        if _bull_day:
-            total = min(total, 65)    # BULL day: allow BUY, block STRONG BUY
-        else:
-            total = min(total, 50)    # BEAR/SIDEWAYS: block all BUY
-    elif _vix_level == 'HIGH':        # VIX 20-25 — expiry/event day
-        if _bull_day:
-            total = min(total, 80)    # BULL day: allow STRONG BUY, slight cap
-        else:
-            total = min(total, 65)    # BEAR/SIDEWAYS: allow BUY, cap STRONG BUY
-    elif _vix_level == 'ELEVATED':    # VIX 16-20 — normal India range
-        pass                          # No cap at all — trade freely
+    # Only hard-cap truly dangerous conditions
+    if _vix_level == 'CRISIS':          # VIX > 30 — COVID/war level
+        total = min(total, 45)          # Near-total block
+    elif _vix_level == 'EXTREME':       # VIX 25-30 — serious fear
+        total = min(total, 60)          # Block most signals
 
-    # Nifty BEAR state additional cap (regardless of VIX)
-    if _nifty_state == 'BEAR' and total >= 65:
-        total = min(total, 62)
-
-    # Time-based hard cap
+    # Time-based hard cap — after 3:15 PM never trade
     if scores.get('Time_Context', 0) <= -20:
         total = min(total, 35)
 
@@ -3464,7 +3442,8 @@ with st.sidebar:
     st.markdown("<div class='sb-section-label'>⚙ Config</div>", unsafe_allow_html=True)
 
     interval_label = st.selectbox("Timeframe",
-        ["1min — Real-Time", "3min — Fast", "5min — Standard", "15min — Swing", "60min — Positional"])
+        ["5min — Standard", "1min — Real-Time", "3min — Fast", "15min — Swing", "60min — Positional"],
+        help="5min recommended — signals stay fresh for 25 min. 1min signals expire in 3 min.")
     interval_map = {
         "1min — Real-Time":   "1minute",
         "3min — Fast":        "3minute",
@@ -4058,7 +4037,7 @@ if _show_dashboard:
                          'Favour long entries. Strong RS stocks outperform. Avoid short setups.',
                          '#15803d','#f0fdf4','#bbf7d0'),
             'BEAR':     ('📉','Nifty Bearish',
-                         'Very selective longs only — RS > 2% minimum. Avoid momentum buys.',
+                         'Trade only stocks with RS > 1.0% vs Nifty — defensive/commodity/sector-specific only. Reduce size 50%.',
                          '#991b1b','#fff5f5','#fecaca'),
             'SIDEWAYS': ('↔️','Nifty Sideways',
                          'Stock-specific moves only. Wait for clear direction before entering.',
@@ -5063,15 +5042,18 @@ if _show_scanner:
             _reject_reasons[_sym] = 'VWAP Below'
             continue
 
-        # ── Filter 3 — Volume >= 2.5x (raised from 1.5x) ──
-        _vol_threshold = (1.5 if _cpd <= 10 else (2.0 if _cpd <= 25 else 2.5))
+        # ── Filter 3 — Volume (BEAR day: lower threshold) ──
+        # Defensive/commodity stocks move on 1.5-2× not 2.5×
+        _vol_threshold = (1.5 if _cpd <= 10 else (2.0 if _cpd <= 25 else
+                          (1.5 if _nifty_st == 'BEAR' else 2.5)))
         if _vol < _vol_threshold:
-            _reject_reasons[_sym] = f'Vol {_vol:.1f}x < {_vol_threshold}x'
+            _reject_reasons[_sym] = f'Vol {_vol:.1f}× < {_vol_threshold}×'
             continue
 
-        # ── Filter 4 — Liquidity EXCELLENT only ───────────
-        if _liq != 'EXCELLENT':
-            _reject_reasons[_sym] = f'Liquidity {_liq} (need EXCELLENT)'
+        # ── Filter 4 — Liquidity (BEAR day: allow HIGH too) ─
+        _liq_required = ['EXCELLENT'] if _nifty_st != 'BEAR' else ['EXCELLENT','HIGH']
+        if _liq not in _liq_required:
+            _reject_reasons[_sym] = f'Liquidity {_liq} (need EXCELLENT{" or HIGH on BEAR days" if _nifty_st=="BEAR" else ""})'
             continue
 
         # ── Filter 5 — RS not severely underperforming ────
@@ -5082,14 +5064,20 @@ if _show_scanner:
             _reject_reasons[_sym] = f'RS {_rs:.1f}% severely underperforming Nifty'
             continue
 
-        # ── Filter 6 — Signal age <= 3 candles ────────────
-        if _sig_age > 3:
+        # ── Filter 6 — Signal age <= 5 candles ────────────
+        # 5-min chart: 5 candles = 25 min → valid at 9:35 AM scan ✅
+        # 1-min chart: 5 candles = 5 min → better than 3 min
+        if _sig_age > 5:
             _reject_reasons[_sym] = f'Signal {_sig_age} candles old (stale)'
             continue
 
-        # ── Filter 7 — Nifty not BEAR ─────────────────────
-        if _nifty_st == 'BEAR':
-            _reject_reasons[_sym] = 'Nifty BEAR — no longs today'
+        # ── Filter 7 — BEAR day RS gate ───────────────────
+        # On BEAR days don't block everything — only block
+        # stocks NOT outperforming Nifty significantly.
+        # Stocks with RS > 1.0% are moving independently
+        # (defensive, commodity, sector-specific) — allow them.
+        if _nifty_st == 'BEAR' and _rs < 1.0:
+            _reject_reasons[_sym] = f'Nifty BEAR + RS only {_rs:.1f}% (need > 1.0% on BEAR days)'
             continue
 
         # ── Filter 8 — RSI not overbought (< 72) ──────────
@@ -5111,6 +5099,11 @@ if _show_scanner:
         _cpr_ok  = _cpr_w is not None and _cpr_w < 0.6
         _mtf_key = f"mtf_{_r['symbol']}_{interval}"
         _align   = st.session_state.get(_mtf_key, {}).get('alignment', 'UNKNOWN')
+
+        # Position size multiplier — market conditions
+        _pos_mult, _pos_lbl, _pos_clr = get_position_size_multiplier(_rs)
+        _adj_qty  = max(1, int(_f(_tp.get('qty', 0)) * _pos_mult))
+        _adj_inv  = round(_price * _adj_qty, 2)
 
         _shortlist.append({
             'result':    _r,
@@ -5136,6 +5129,11 @@ if _show_scanner:
             't1':        _t1_px,
             't2':        _f(_tp.get('t2', 0)),
             'qty':       int(_f(_tp.get('qty', 0))),
+            'adj_qty':   _adj_qty,       # position-size-adjusted qty
+            'adj_inv':   _adj_inv,       # adjusted investment
+            'pos_mult':  _pos_mult,      # 0.25 to 1.0
+            'pos_lbl':   _pos_lbl,       # "70% size — Bull + High VIX"
+            'pos_clr':   _pos_clr,       # colour for display
             'rr':        _rr,
             'sl_dist':   _sl_dist,
             'investment':_f(_tp.get('investment', 0)),
@@ -5151,7 +5149,7 @@ if _show_scanner:
         _reason   = (
             "Market opened less than 20 min ago — wait until 9:35 AM" if _tm2 < 575 else
             "VIX is EXTREME/CRISIS — signals capped today" if st.session_state.get('nifty_context',{}).get('vix_level') in ['HIGH','EXTREME','CRISIS'] else
-            "Nifty is BEAR — no long entries today" if st.session_state.get('nifty_market_state') == 'BEAR' else
+            "Nifty is BEAR — only stocks with RS > 1.0% qualify today" if st.session_state.get('nifty_market_state') == 'BEAR' else
             "No stocks passed all 10 precision filters — do not force a trade today"
         )
         st.markdown(f"""
@@ -5210,11 +5208,14 @@ if _show_scanner:
             _sl_px  = _sl.get('sl', 0)
             _t1     = _sl.get('t1', 0)
             _t2     = _sl.get('t2', 0)
-            _qty    = _sl.get('qty', 0)
+            _qty    = _sl.get('adj_qty', _sl.get('qty', 0))   # use adjusted qty
             _rr     = _sl.get('rr', 0)
             _sl_d   = _sl.get('sl_dist', 0)
-            _inv    = _sl.get('investment', 0)
+            _inv    = _sl.get('adj_inv', _sl.get('investment', 0))
             _risk   = _sl.get('risk_amt', 0)
+            _pos_lbl= _sl.get('pos_lbl', '100% size — Full position')
+            _pos_clr= _sl.get('pos_clr', '#16a34a')
+            _pos_mult=_sl.get('pos_mult', 1.0)
             _sl_pct = round((_entry - _sl_px) / _entry * 100, 2) if _entry > 0 else 0
             _t1_pct = round((_t1 - _entry) / _entry * 100, 2)    if _entry > 0 else 0
             _t2_pct = round((_t2 - _entry) / _entry * 100, 2)    if _entry > 0 else 0
@@ -5249,6 +5250,14 @@ if _show_scanner:
                                 &nbsp;·&nbsp; RSI {_sl["rsi"]:.0f}
                                 &nbsp;·&nbsp; Vol {_sl["vol"]:.1f}×
                                 &nbsp;·&nbsp; RS <span style='color:{_rs_clr}'>{_sl["rs"]:+.1f}%</span>
+                            </div>
+                            <div style='margin-top:5px'>
+                                <span style='background:{_pos_clr}22;color:{_pos_clr};
+                                             font-size:10px;font-weight:700;
+                                             border-radius:4px;padding:2px 8px;
+                                             border:1px solid {_pos_clr}44'>
+                                    💰 {_pos_lbl}
+                                </span>
                             </div>
                         </div>
                     </div>
@@ -6791,9 +6800,9 @@ if _show_orb:
     with _ob1:
         _orb_universe = st.radio(
             "Scan universe",
-            ["Top 100 Early Mover Stocks", "Custom Watchlist", "Full NSE 500"],
+            ["Full NSE 500", "Top 100 Early Mover Stocks", "Custom Watchlist"],
             horizontal=True, key="orb_page_universe",
-            help="Top 100 = fastest (~30s). Best for morning ORB window.")
+            help="Full NSE 500 = ~90s — catches all active stocks. Top 100 = ~30s but misses many.")
         _orb_count = (len(EARLY_MOVER_STOCKS) if _orb_universe == "Top 100 Early Mover Stocks"
                       else len(selected_stocks) if _orb_universe == "Custom Watchlist"
                       else len(POPULAR_STOCKS))
@@ -7242,9 +7251,9 @@ if _show_earlymovers:
     with _em_c1:
         _em_universe = st.radio(
             "Scan universe",
-            ["Top 100 Early Mover Stocks", "Custom Watchlist", "Full NSE 500"],
+            ["Full NSE 500", "Top 100 Early Mover Stocks", "Custom Watchlist"],
             horizontal=True, key="em_universe",
-            help="Top 100 = fastest (~30s). Full NSE 500 = 90s — too slow for early movers.")
+            help="Full NSE 500 = ~90s — catches all active stocks including AARTIIND, ABCAPITAL etc. Top 100 = ~30s.")
         _em_count = (len(EARLY_MOVER_STOCKS) if _em_universe == "Top 100 Early Mover Stocks"
                      else len(selected_stocks) if _em_universe == "Custom Watchlist"
                      else len(POPULAR_STOCKS))
