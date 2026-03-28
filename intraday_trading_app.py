@@ -519,8 +519,13 @@ def detect_opening_breakout(df, symbol, price, prev_close):
 def run_breakout_screener(selected_stocks, interval, kite, port):
     """
     Fast dedicated breakout scan — no signal scoring, just 5 ORB rules.
+    Always uses 5-min data regardless of scanner timeframe setting.
+    Reason: 5-min first candle = genuine opening range (5 min of price discovery)
+            1-min first candle = just 60 seconds of noise → many fake breakouts
     Reuses cached data so much faster on second run.
     """
+    # ORB always uses 5-min — hardcoded, not from scanner sidebar
+    _orb_interval = '5minute'
     results = []
     total   = len(selected_stocks)
     _prog   = st.progress(0, text="🚀 Running Breakout Screener...")
@@ -532,11 +537,11 @@ def run_breakout_screener(selected_stocks, interval, kite, port):
         _prog.progress(pct, text=f"🚀 {idx+1}/{total} · {sym_clean}")
 
         try:
-            _ck = _cache_key(symbol, interval)
+            _ck = _cache_key(symbol, _orb_interval)
             if _ck in _DATA_CACHE:
                 df, src = _DATA_CACHE[_ck]
             else:
-                df, src = fetch_intraday(symbol, interval, period='1d', kite=kite)
+                df, src = fetch_intraday(symbol, _orb_interval, period='1d', kite=kite)
                 if df is None:
                     continue
 
@@ -1729,6 +1734,9 @@ def fetch_multi_timeframe(symbol, kite=None):
     _results['alignment'] = _alignment
     _results['mtf_score'] = _score
     return _results
+
+
+
 
 def _cache_key(symbol, interval):
     # 1min/3min data: refresh every 5 minutes (stale data = missed signals)
@@ -3477,9 +3485,9 @@ with st.sidebar:
     st.markdown("<hr class='sb-section-divider'>", unsafe_allow_html=True)
     st.markdown("<div class='sb-section-label'>⚙ Config</div>", unsafe_allow_html=True)
 
-    interval_label = st.selectbox("Timeframe",
+    interval_label = st.selectbox("📊 Scanner Timeframe",
         ["5min — Standard", "1min — Real-Time", "3min — Fast", "15min — Swing", "60min — Positional"],
-        help="5min recommended — signals stay fresh for 25 min. 1min signals expire in 3 min.")
+        help="Only applies to Main Scanner. Early Movers uses 1-min (hardcoded). ORB uses 5-min (hardcoded).")
     interval_map = {
         "1min — Real-Time":   "1minute",
         "3min — Fast":        "3minute",
@@ -6846,7 +6854,8 @@ if _show_orb:
             f"<div style='font-size:11px;color:#64748b;margin-top:-8px'>"
             f"⚡ {_orb_count} stocks · "
             f"{'~30 sec' if _orb_count <= 120 else '~60 sec' if _orb_count <= 250 else '~90 sec'}"
-            f" scan time</div>", unsafe_allow_html=True)
+            f" · <b style='color:#0369a1'>5-min candles (hardcoded — optimal for ORB)</b>"
+            f"</div>", unsafe_allow_html=True)
     with _ob2:
         _run_orb_page = st.button(
             "🔓 Run ORB Scan",
@@ -7297,7 +7306,8 @@ if _show_earlymovers:
             f"<div style='font-size:11px;color:#64748b;margin-top:-8px'>"
             f"⚡ {_em_count} stocks · "
             f"{'~30 sec' if _em_count <= 120 else '~60 sec' if _em_count <= 250 else '~90 sec'}"
-            f" scan time</div>", unsafe_allow_html=True)
+            f" · <b style='color:#f59e0b'>1-min candles (hardcoded — fastest gap detection)</b>"
+            f"</div>", unsafe_allow_html=True)
     with _em_c2:
         _em_gap_min = st.number_input(
             "Min gap %", min_value=0.5, max_value=5.0,
