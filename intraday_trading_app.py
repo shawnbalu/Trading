@@ -2356,15 +2356,31 @@ def get_intraday_trade_plan(df, capital, risk_pct):
         rps       = round(entry * 0.005, 2)   # 0.5% fallback
         stop_loss = round(entry - rps, 2)
 
-    # ── Intraday targets: 1×, 1.5×, 2×, 3× risk ──────────────
-    # T1 raised from 0.5R → 1.0R so R:R is at least 1:1 at first exit
-    # Backtest showed R:R of 1.06 at T1 — barely profitable at 51% win rate
-    # At 1.0R T1: win rate of 51% gives positive expectancy
-    # At 1.5R T2: exit 25% more — trail SL to entry after T1
-    t1 = round(entry + rps * 1.0, 2)   # R:R 1:1   — first target, book 50%
-    t2 = round(entry + rps * 1.5, 2)   # R:R 1.5:1 — move SL to entry
-    t3 = round(entry + rps * 2.0, 2)   # R:R 2:1   — trail SL to T1
-    t4 = round(entry + rps * 3.0, 2)   # R:R 3:1   — let it run
+    # ── Time-based target multiplier ─────────────────────
+    # Targets shrink as day progresses — less time = tighter targets
+    _now = ist_now()
+    _tm  = _now.hour * 60 + _now.minute
+    if _tm <= 690:        # 9:15–11:30 AM — best window
+        _tmult  = 1.0
+        _tlabel = 'Best window (full targets)'
+    elif _tm <= 810:      # 11:30 AM–1:30 PM — lunch zone
+        _tmult  = 0.7
+        _tlabel = 'Lunch zone (reduced 0.7×)'
+    elif _tm <= 870:      # 1:30–2:30 PM — second window
+        _tmult  = 0.7
+        _tlabel = 'Second window (reduced 0.7×)'
+    elif _tm <= 900:      # 2:30–3:00 PM — late entry
+        _tmult  = 0.5
+        _tlabel = 'Late entry (scalp only 0.5×)'
+    else:                 # after 3:00 PM
+        _tmult  = 0.3
+        _tlabel = 'Too late — exit only'
+
+    # ── Targets scaled by time multiplier ────────────────
+    t1 = round(entry + rps * 1.0 * _tmult, 2)   # R:R 1:1   — book 50%
+    t2 = round(entry + rps * 1.5 * _tmult, 2)   # R:R 1.5:1 — move SL to entry
+    t3 = round(entry + rps * 2.0 * _tmult, 2)   # R:R 2:1   — trail SL to T1
+    t4 = round(entry + rps * 3.0 * _tmult, 2)   # R:R 3:1   — let it run
 
     ra  = capital * (risk_pct / 100)
     ps  = max(1, int(ra / rps))
@@ -2413,6 +2429,8 @@ def get_intraday_trade_plan(df, capital, risk_pct):
         "t1": t1, "t2": t2, "t3": t3, "t4": t4,
         "rps": round(rps, 2), "qty": ps,
         "investment": inv, "actual_cost": actual,
+        "time_mult":  round(_tmult, 1),
+        "time_label": _tlabel,
         "risk_amount": round(ra, 2),
         "buy_charges": {
             "brokerage": round(brok_b, 2), "stt_buy": 0,
