@@ -5423,12 +5423,16 @@ if _show_scanner:
                         'actual_cost': round(_inv, 2),
                         'timeframe':   interval,
                         'date':        ist_now().strftime('%d %b %Y %H:%M'),
+                        'entry_time':  ist_now().strftime('%H:%M'),
+                        'nifty_state': st.session_state.get('nifty_market_state', 'UNKNOWN'),
+                        'vix_level':   st.session_state.get('nifty_context', {}).get('vix_level', 'UNKNOWN'),
                         'score':       _sl['score'],
                         'verdict':     _vd,
                         'sig_age':     _sig_age,
                         'rs_vs_nifty': _sl['rs'],
                         'vol_ratio':   _sl['vol'],
                         'source':      'shortlist_quick_buy',
+                        'exit_reason': '',
                     }
                     _port.append(_new_pos)
                     save_portfolio(_port)
@@ -7093,10 +7097,14 @@ if _show_orb:
                                 'actual_cost': round(_orb_entry * _orb_qty, 2),
                                 'timeframe':   '1min — ORB Breakout',
                                 'date':        ist_now().strftime('%d %b %Y %H:%M'),
+                                'entry_time':  ist_now().strftime('%H:%M'),
+                                'nifty_state': st.session_state.get('nifty_market_state', 'UNKNOWN'),
+                                'vix_level':   st.session_state.get('nifty_context', {}).get('vix_level', 'UNKNOWN'),
                                 'score':       _bo_r.get('best', {}).get('score', 0),
                                 'verdict':     _bo_r.get('best', {}).get('title', 'ORB BUY'),
                                 'vol_ratio':   _bo_r.get('vol_ratio', 0),
                                 'source':      'orb_scanner',
+                                'exit_reason': '',
                             })
                             save_portfolio(_port)
                             st.session_state['paper_portfolio'] = _port
@@ -7801,11 +7809,15 @@ if _show_earlymovers:
                                 'actual_cost': round(_em_entry * _em_qty, 2),
                                 'timeframe':   '1min — Early Mover',
                                 'date':        ist_now().strftime('%d %b %Y %H:%M'),
+                                'entry_time':  ist_now().strftime('%H:%M'),
+                                'nifty_state': st.session_state.get('nifty_market_state', 'UNKNOWN'),
+                                'vix_level':   st.session_state.get('nifty_context', {}).get('vix_level', 'UNKNOWN'),
                                 'score':       0,
                                 'verdict':     _em['action'],
                                 'gap_pct':     _em['gap_pct'],
                                 'vol_ratio':   _em['vol_x'],
                                 'source':      'early_movers',
+                                'exit_reason': '',
                             })
                             save_portfolio(_port)
                             st.session_state['paper_portfolio'] = _port
@@ -8006,10 +8018,10 @@ if _show_portfolio:
             _cur_pct = (cur - entry) / entry * 100
             if _cur_pct >= _as_tp_pct:
                 _auto_triggered = True
-                _auto_reason    = f"Take Profit +{_as_tp_pct:.2f}% hit"
+                _auto_reason    = 'T1_HIT'
             elif _cur_pct <= -_as_sl_pct:
                 _auto_triggered = True
-                _auto_reason    = f"Stop Loss −{_as_sl_pct:.2f}% hit"
+                _auto_reason    = 'SL_HIT'
 
         if _auto_triggered:
             for _p in port:
@@ -8125,7 +8137,7 @@ if _show_portfolio:
                             _p['exit_price'] = round(cur, 2)
                             _p['net_pl']     = round(unreal, 2)
                             _p['exit_date']  = ist_now().strftime('%d %b %Y %H:%M IST')
-                            _p['exit_reason']= 'Manual'
+                            _p['exit_reason']= 'MANUAL_PROFIT' if unreal >= 0 else 'MANUAL_LOSS'
                             break
                     save_portfolio(port)
                     st.session_state['paper_portfolio'] = port
