@@ -7047,11 +7047,16 @@ if _show_orb:
                         </div>
                     </div>
 
-                    <!-- All patterns found -->
-                    <div style='margin-top:12px;display:flex;flex-direction:column;gap:6px'>
-                        {_orb_patterns_html}
-                    </div>
+                    <!-- All patterns found placeholder -->
+                    <div id='orb_patterns_placeholder_{_bo_r["sym_clean"]}'></div>
                 </div>""", unsafe_allow_html=True)
+                # Render patterns separately to avoid f-string quote conflicts
+                if _orb_patterns_html:
+                    st.markdown(
+                        f"<div style='margin-top:-8px;margin-bottom:8px;"
+                        f"padding:0 18px;display:flex;flex-direction:column;gap:6px'>"
+                        f"{_orb_patterns_html}</div>",
+                        unsafe_allow_html=True)
             with _oc2:
                 st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
 
@@ -7951,6 +7956,11 @@ if _show_portfolio:
         st.session_state['pf_last_refresh_ts']= time.time()
         _pf_prices = _new_prices
         _fetch_spinner.empty()
+        # If auto-refresh triggered this fetch → rerun to update UI
+        # then sleep 30s before next rerun cycle
+        if _pf_auto and market_open():
+            time.sleep(30)
+            st.rerun()
 
     # Calculate total P&L using live prices
     total_inv    = sum(_f(p.get('actual_cost', _f(p.get('investment',0)))) for p in open_pos)
