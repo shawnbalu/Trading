@@ -1158,57 +1158,55 @@ POPULAR_STOCKS = list([
     "IGL.NS", "MGL.NS", "GAIL.NS", "PETRONET.NS", "TATAPOWER.NS", "TORNTPOWER.NS", "DIXON.NS", "JIOFIN.NS",
     "ABCAPITAL.NS", "MUTHOOTFIN.NS", "NYKAA.NS", "PAYTM.NS", "ZYDUSLIFE.NS", "LUPIN.NS", "AUROPHARMA.NS", "LODHA.NS",
     "DLF.NS", "OBEROIRLTY.NS", "GRAPHITE.NS", "AARTIIND.NS", "PRESTIGE.NS", "BRIGADE.NS", "IRCTC.NS", "HDFCAMC.NS",
-
-    # ── Tier 3: Active midcap — HIGH liquidity (49 stocks)
-    "AMBUJACEM.NS", "ACC.NS", "RAMCOCEM.NS", "JKCEMENT.NS", "SHREECEM.NS", "COROMANDEL.NS", "PIIND.NS", "UPL.NS",
-    "CHAMBLFERT.NS", "SRF.NS", "TATACHEM.NS", "SIEMENS.NS", "ABB.NS", "HAVELLS.NS", "CUMMINSIND.NS", "VOLTAS.NS",
-    "CROMPTON.NS", "TVSMOTOR.NS", "ESCORTS.NS", "ASHOKLEY.NS", "MOTHERSON.NS", "BALKRISIND.NS", "APOLLOTYRE.NS", "AFFLE.NS",
-    "HAPPSTMNDS.NS", "PVRINOX.NS", "DCMSHRIRAM.NS", "WELCORP.NS", "JBCHEPHARM.NS", "ANANTRAJ.NS", "SOBHA.NS", "GODREJPROP.NS",
-    "APTUS.NS", "ACMESOLAR.NS", "ABFRL.NS", "BIKAJI.NS", "NUVOCO.NS", "RADICO.NS", "IPCALAB.NS", "ALKEM.NS",
-    "TORNTPHARM.NS", "GLENMARK.NS", "MANKIND.NS", "KALYANKJIL.NS", "BAJAJHLDNG.NS", "GODREJCP.NS", "DABUR.NS", "MARICO.NS",
-    "COLPAL.NS", "360ONE.NS", "3MINDIA.NS", "AADHARHFC.NS", "AAVAS.NS", "ABBOTINDIA.NS", "ABLBL.NS", "ABREL.NS",
-    "ABSLAMC.NS", "ACE.NS", "ADANIENSOL.NS", "AEGISLOG.NS", "AEGISVOPAK.NS", "AFCONS.NS", "AGARWALEYE.NS", "AIAENG.NS",
-    "AIIL.NS", "AJANTPHARM.NS", "AKUMS.NS", "AKZOINDIA.NS", "ALKYLAMINE.NS", "ALOKINDS.NS", "AMBER.NS", "ANANDRATHI.NS",
-    "ANGELONE.NS", "APARINDS.NS", "APLAPOLLO.NS", "APLLTD.NS", "ARE&M.NS", "ASAHIINDIA.NS", "ASTERDM.NS", "ASTRAL.NS",
-    "ASTRAZEN.NS", "ATHERENERG.NS", "ATUL.NS", "AWL.NS", "BAJAJHFL.NS", "BALRAMCHIN.NS", "BANKINDIA.NS", "BASF.NS",
-    "BATAINDIA.NS", "BAYERCROP.NS", "BBTC.NS", "BDL.NS", "BEML.NS", "BERGEPAINT.NS", "BHARATFORG.NS", "BHARTIHEXA.NS",
-    "BIOCON.NS", "BLS.NS", "BLUEDART.NS", "BLUEJET.NS", "BLUESTARCO.NS", "BOSCHLTD.NS", "BSE.NS", "BSOFT.NS",
-    "CAMPUS.NS", "CAMS.NS", "CANBK.NS", "CANFINHOME.NS", "CAPLIPOINT.NS", "CARBORUNIV.NS", "CASTROLIND.NS", "CCL.NS",
-    "CDSL.NS", "CEATLTD.NS", "CENTRALBK.NS", "CENTURYPLY.NS", "CERA.NS", "CESC.NS", "CGCL.NS", "CGPOWER.NS",
-    "CHALET.NS", "CHENNPETRO.NS", "CHOICEIN.NS", "CHOLAFIN.NS", "CHOLAHLDNG.NS", "CLEAN.NS", "COCHINSHIP.NS", "COHANCE.NS",
-    "CONCOR.NS", "CONCORDBIO.NS", "CRAFTSMAN.NS", "CREDITACC.NS", "CRISIL.NS", "CUB.NS", "CYIENT.NS", "DALBHARAT.NS",
-    "DATAPATTNS.NS", "DBREALTY.NS", "DEEPAKFERT.NS", "DEEPAKNTR.NS", "DELHIVERY.NS", "DEVYANI.NS", "DMART.NS", "DOMS.NS",
-    "ECLERX.NS", "EIDPARRY.NS", "EIHOTEL.NS", "ELECON.NS", "ELGIEQUIP.NS", "EMAMILTD.NS", "EMCURE.NS", "ENDURANCE.NS",
-    "ENGINERSIN.NS", "ENRIN.NS", "ERIS.NS", "ETERNAL.NS", "EXIDEIND.NS", "FACT.NS", "FINCABLES.NS", "FINPIPE.NS",
-    "FIRSTCRY.NS", "FIVESTAR.NS", "FLUOROCHEM.NS", "FORCEMOT.NS", "FORTIS.NS", "FSL.NS", "GESHIP.NS", "GICRE.NS",
-    "GILLETTE.NS", "GLAND.NS", "GLAXO.NS", "GMDCLTD.NS", "GMRAIRPORT.NS", "GODFRYPHLP.NS", "GODIGIT.NS", "GODREJAGRO.NS",
-    "GODREJIND.NS", "GPIL.NS", "GRANULES.NS", "GRAVITA.NS", "GRSE.NS", "GSPL.NS", "GUJGASLTD.NS", "GVT&D.NS",
-    "HBLENGINE.NS", "HEG.NS", "HEXT.NS", "HFCL.NS", "HINDCOPPER.NS", "HINDPETRO.NS", "HINDZINC.NS", "HOMEFIRST.NS",
-    "HONASA.NS", "HONAUT.NS", "HSCL.NS", "HYUNDAI.NS", "ICICIGI.NS", "ICICIPRULI.NS", "IDBI.NS", "IEX.NS",
-    "IFCI.NS", "IGIL.NS", "IIFL.NS", "IKS.NS", "INDGN.NS", "INDHOTEL.NS", "INDIACEM.NS", "INDIAMART.NS",
-    "INDIANB.NS", "INDIGO.NS", "INDUSTOWER.NS", "INOXINDIA.NS", "INOXWIND.NS", "INTELLECT.NS", "IOB.NS", "IOC.NS",
-    "IRB.NS", "IRCON.NS", "IREDA.NS", "ITC.NS", "ITCHOTELS.NS", "ITI.NS", "J&KBANK.NS", "JBMA.NS",
-    "JINDALSAW.NS", "JINDALSTEL.NS", "JKTYRE.NS", "JMFINANCIL.NS", "JPPOWER.NS", "JSL.NS", "JSWCEMENT.NS", "JSWENERGY.NS",
-    "JSWINFRA.NS", "JUBLFOOD.NS", "JUBLINGREA.NS", "JUBLPHARMA.NS", "JWL.NS", "JYOTHYLAB.NS", "JYOTICNC.NS", "KAJARIACER.NS",
-    "KARURVYSYA.NS", "KAYNES.NS", "KEC.NS", "KEI.NS", "KFINTECH.NS", "KIMS.NS", "KIRLOSBROS.NS", "KIRLOSENG.NS",
-    "KPIL.NS", "KPRMILL.NS", "KSB.NS", "LALPATHLAB.NS", "LATENTVIEW.NS", "LAURUSLABS.NS", "LEMONTREE.NS", "LICHSGFIN.NS",
-    "LICI.NS", "LINDEINDIA.NS", "LLOYDSME.NS", "LTF.NS", "LTFOODS.NS", "LTM.NS", "M&MFIN.NS", "MAHABANK.NS",
-    "MAHSCOOTER.NS", "MAHSEAMLES.NS", "MANAPPURAM.NS", "MANYAVAR.NS", "MAPMYINDIA.NS", "MAXHEALTH.NS", "MAZDOCK.NS", "MCX.NS",
-    "MEDANTA.NS", "METROPOLIS.NS", "MFSL.NS", "MINDACORP.NS", "MMTC.NS", "MOTILALOFS.NS", "MRF.NS", "MRPL.NS",
-    "MSUMI.NS", "NAM-INDIA.NS", "NATCOPHARM.NS", "NATIONALUM.NS", "NAUKRI.NS", "NAVA.NS", "NAVINFLUOR.NS", "NBCC.NS",
-    "NCC.NS", "NETWEB.NS", "NEULANDLAB.NS", "NEWGEN.NS", "NH.NS", "NIACL.NS", "NIVABUPA.NS", "NLCINDIA.NS",
-    "NMDC.NS", "NSLNISP.NS", "NTPCGREEN.NS", "NUVAMA.NS", "OIL.NS", "OLAELEC.NS", "OLECTRA.NS", "ONESOURCE.NS",
-    "PAGEIND.NS", "PATANJALI.NS", "PCBL.NS", "PFIZER.NS", "PGEL.NS", "PGHH.NS", "PHOENIXLTD.NS", "PIDILITIND.NS",
-    "PNBHOUSING.NS", "POLICYBZR.NS", "POLYCAB.NS", "POLYMED.NS", "POONAWALLA.NS", "POWERINDIA.NS", "PPLPHARMA.NS", "PRAJIND.NS",
-    "PREMIERENE.NS", "PTCIL.NS", "RAILTEL.NS", "RAINBOW.NS", "RCF.NS", "REDINGTON.NS", "RELINFRA.NS", "RHIM.NS",
-    "RITES.NS", "RKFORGE.NS", "RPOWER.NS", "RRKABEL.NS", "SAGILITY.NS", "SAILIFE.NS", "SAMMAANCAP.NS", "SAPPHIRE.NS",
-    "SARDAEN.NS", "SAREGAMA.NS", "SBFC.NS", "SBILIFE.NS", "SCHAEFFLER.NS", "SCHNEIDER.NS", "SCI.NS", "SHYAMMETL.NS",
-    "SIGNATURE.NS", "SOLARINDS.NS", "SONACOMS.NS", "SONATSOFTW.NS", "STARHEALTH.NS", "SUMICHEM.NS", "SUNDARMFIN.NS", "SUNDRMFAST.NS",
-    "SUNTV.NS", "SUPREMEIND.NS", "SWANCORP.NS", "SWIGGY.NS", "SYNGENE.NS", "SYRMA.NS", "TARIL.NS", "TATACOMM.NS",
-    "TATAINVEST.NS", "TATATECH.NS", "TBOTEK.NS", "TECHNOE.NS", "TEJASNET.NS", "THELEELA.NS", "THERMAX.NS", "TIINDIA.NS",
-    "TIMKEN.NS", "TITAGARH.NS", "TMPV.NS", "TRIDENT.NS", "TRITURBINE.NS", "TRIVENI.NS", "TTML.NS", "UBL.NS",
-    "UCOBANK.NS", "UNIONBANK.NS", "UNITDSPR.NS", "UNOMINDA.NS", "USHAMART.NS", "UTIAMC.NS", "VBL.NS", "VENTIVE.NS",
-    "VGUARD.NS", "VIJAYA.NS", "VMM.NS", "VTL.NS", "WAAREEENER.NS", "WELSPUNLIV.NS", "WHIRLPOOL.NS", "WOCKPHARMA.NS",
+    "ASTRAL.NS", "BHARATFORG.NS", "BSE.NS", "CAMS.NS", "CANFINHOME.NS", "CDSL.NS", "CHOLAFIN.NS", "DELHIVERY.NS",
+    "ELGIEQUIP.NS", "GRANULES.NS", "GSPL.NS", "INDHOTEL.NS", "INDIAMART.NS", "INDUSTOWER.NS", "JSWENERGY.NS", "JUBLFOOD.NS",
+    "LICHSGFIN.NS", "M&MFIN.NS", "MAXHEALTH.NS", "MCX.NS", "MFSL.NS", "NAUKRI.NS", "PAGEIND.NS", "POLICYBZR.NS",
+    "SUNDARMFIN.NS", "SUNTV.NS", "TATACOMM.NS", "TATAINVEST.NS", "TBOTEK.NS", "TIINDIA.NS", "UBL.NS", "UNIONBANK.NS",
+    "UNITDSPR.NS", "WAAREEENER.NS", "AMBUJACEM.NS", "ACC.NS", "RAMCOCEM.NS", "JKCEMENT.NS", "SHREECEM.NS", "COROMANDEL.NS",
+    "PIIND.NS", "UPL.NS", "CHAMBLFERT.NS", "SRF.NS", "TATACHEM.NS", "SIEMENS.NS", "ABB.NS", "HAVELLS.NS",
+    "CUMMINSIND.NS", "VOLTAS.NS", "CROMPTON.NS", "TVSMOTOR.NS", "ESCORTS.NS", "ASHOKLEY.NS", "MOTHERSON.NS", "BALKRISIND.NS",
+    "APOLLOTYRE.NS", "AFFLE.NS", "HAPPSTMNDS.NS", "PVRINOX.NS", "DCMSHRIRAM.NS", "WELCORP.NS", "JBCHEPHARM.NS", "ANANTRAJ.NS",
+    "SOBHA.NS", "GODREJPROP.NS", "APTUS.NS", "ACMESOLAR.NS", "ABFRL.NS", "BIKAJI.NS", "NUVOCO.NS", "RADICO.NS",
+    "IPCALAB.NS", "ALKEM.NS", "TORNTPHARM.NS", "GLENMARK.NS", "MANKIND.NS", "KALYANKJIL.NS", "BAJAJHLDNG.NS", "GODREJCP.NS",
+    "DABUR.NS", "MARICO.NS", "COLPAL.NS", "360ONE.NS", "3MINDIA.NS", "AADHARHFC.NS", "AAVAS.NS", "ABBOTINDIA.NS",
+    "ABLBL.NS", "ABREL.NS", "ABSLAMC.NS", "ACE.NS", "ADANIENSOL.NS", "AEGISLOG.NS", "AEGISVOPAK.NS", "AFCONS.NS",
+    "AGARWALEYE.NS", "AIAENG.NS", "AIIL.NS", "AJANTPHARM.NS", "AKUMS.NS", "AKZOINDIA.NS", "ALKYLAMINE.NS", "ALOKINDS.NS",
+    "AMBER.NS", "ANANDRATHI.NS", "ANGELONE.NS", "APARINDS.NS", "APLAPOLLO.NS", "APLLTD.NS", "ARE&M.NS", "ASAHIINDIA.NS",
+    "ASTERDM.NS", "ASTRAZEN.NS", "ATHERENERG.NS", "ATUL.NS", "AWL.NS", "BAJAJHFL.NS", "BALRAMCHIN.NS", "BANKINDIA.NS",
+    "BASF.NS", "BATAINDIA.NS", "BAYERCROP.NS", "BBTC.NS", "BDL.NS", "BEML.NS", "BERGEPAINT.NS", "BHARTIHEXA.NS",
+    "BIOCON.NS", "BLS.NS", "BLUEDART.NS", "BLUEJET.NS", "BLUESTARCO.NS", "BOSCHLTD.NS", "BSOFT.NS", "CAMPUS.NS",
+    "CANBK.NS", "CAPLIPOINT.NS", "CARBORUNIV.NS", "CASTROLIND.NS", "CCL.NS", "CEATLTD.NS", "CENTRALBK.NS", "CENTURYPLY.NS",
+    "CERA.NS", "CESC.NS", "CGCL.NS", "CGPOWER.NS", "CHALET.NS", "CHENNPETRO.NS", "CHOICEIN.NS", "CHOLAHLDNG.NS",
+    "CLEAN.NS", "COCHINSHIP.NS", "COHANCE.NS", "CONCOR.NS", "CONCORDBIO.NS", "CRAFTSMAN.NS", "CREDITACC.NS", "CRISIL.NS",
+    "CUB.NS", "CYIENT.NS", "DALBHARAT.NS", "DATAPATTNS.NS", "DBREALTY.NS", "DEEPAKFERT.NS", "DEEPAKNTR.NS", "DEVYANI.NS",
+    "DMART.NS", "DOMS.NS", "ECLERX.NS", "EIDPARRY.NS", "EIHOTEL.NS", "ELECON.NS", "EMAMILTD.NS", "EMCURE.NS",
+    "ENDURANCE.NS", "ENGINERSIN.NS", "ENRIN.NS", "ERIS.NS", "ETERNAL.NS", "EXIDEIND.NS", "FACT.NS", "FINCABLES.NS",
+    "FINPIPE.NS", "FIRSTCRY.NS", "FIVESTAR.NS", "FLUOROCHEM.NS", "FORCEMOT.NS", "FORTIS.NS", "FSL.NS", "GESHIP.NS",
+    "GICRE.NS", "GILLETTE.NS", "GLAND.NS", "GLAXO.NS", "GMDCLTD.NS", "GMRAIRPORT.NS", "GODFRYPHLP.NS", "GODIGIT.NS",
+    "GODREJAGRO.NS", "GODREJIND.NS", "GPIL.NS", "GRAVITA.NS", "GRSE.NS", "GUJGASLTD.NS", "GVT&D.NS", "HBLENGINE.NS",
+    "HEG.NS", "HEXT.NS", "HFCL.NS", "HINDCOPPER.NS", "HINDPETRO.NS", "HINDZINC.NS", "HOMEFIRST.NS", "HONASA.NS",
+    "HONAUT.NS", "HSCL.NS", "HYUNDAI.NS", "ICICIGI.NS", "ICICIPRULI.NS", "IDBI.NS", "IEX.NS", "IFCI.NS",
+    "IGIL.NS", "IIFL.NS", "IKS.NS", "INDGN.NS", "INDIACEM.NS", "INDIANB.NS", "INDIGO.NS", "INOXINDIA.NS",
+    "INOXWIND.NS", "INTELLECT.NS", "IOB.NS", "IOC.NS", "IRB.NS", "IRCON.NS", "IREDA.NS", "ITC.NS",
+    "ITCHOTELS.NS", "ITI.NS", "J&KBANK.NS", "JBMA.NS", "JINDALSAW.NS", "JINDALSTEL.NS", "JKTYRE.NS", "JMFINANCIL.NS",
+    "JPPOWER.NS", "JSL.NS", "JSWCEMENT.NS", "JSWINFRA.NS", "JUBLINGREA.NS", "JUBLPHARMA.NS", "JWL.NS", "JYOTHYLAB.NS",
+    "JYOTICNC.NS", "KAJARIACER.NS", "KARURVYSYA.NS", "KAYNES.NS", "KEC.NS", "KEI.NS", "KFINTECH.NS", "KIMS.NS",
+    "KIRLOSBROS.NS", "KIRLOSENG.NS", "KPIL.NS", "KPRMILL.NS", "KSB.NS", "LALPATHLAB.NS", "LATENTVIEW.NS", "LAURUSLABS.NS",
+    "LEMONTREE.NS", "LICI.NS", "LINDEINDIA.NS", "LLOYDSME.NS", "LTF.NS", "LTFOODS.NS", "LTM.NS", "MAHABANK.NS",
+    "MAHSCOOTER.NS", "MAHSEAMLES.NS", "MANAPPURAM.NS", "MANYAVAR.NS", "MAPMYINDIA.NS", "MAZDOCK.NS", "MEDANTA.NS", "METROPOLIS.NS",
+    "MINDACORP.NS", "MMTC.NS", "MOTILALOFS.NS", "MRF.NS", "MRPL.NS", "MSUMI.NS", "NAM-INDIA.NS", "NATCOPHARM.NS",
+    "NATIONALUM.NS", "NAVA.NS", "NAVINFLUOR.NS", "NBCC.NS", "NCC.NS", "NETWEB.NS", "NEULANDLAB.NS", "NEWGEN.NS",
+    "NH.NS", "NIACL.NS", "NIVABUPA.NS", "NLCINDIA.NS", "NMDC.NS", "NSLNISP.NS", "NTPCGREEN.NS", "NUVAMA.NS",
+    "OIL.NS", "OLAELEC.NS", "OLECTRA.NS", "ONESOURCE.NS", "PATANJALI.NS", "PCBL.NS", "PFIZER.NS", "PGEL.NS",
+    "PGHH.NS", "PHOENIXLTD.NS", "PIDILITIND.NS", "PNBHOUSING.NS", "POLYCAB.NS", "POLYMED.NS", "POONAWALLA.NS", "POWERINDIA.NS",
+    "PPLPHARMA.NS", "PRAJIND.NS", "PREMIERENE.NS", "PTCIL.NS", "RAILTEL.NS", "RAINBOW.NS", "RCF.NS", "REDINGTON.NS",
+    "RELINFRA.NS", "RHIM.NS", "RITES.NS", "RKFORGE.NS", "RPOWER.NS", "RRKABEL.NS", "SAGILITY.NS", "SAILIFE.NS",
+    "SAMMAANCAP.NS", "SAPPHIRE.NS", "SARDAEN.NS", "SAREGAMA.NS", "SBFC.NS", "SBILIFE.NS", "SCHAEFFLER.NS", "SCHNEIDER.NS",
+    "SCI.NS", "SHYAMMETL.NS", "SIGNATURE.NS", "SOLARINDS.NS", "SONACOMS.NS", "SONATSOFTW.NS", "STARHEALTH.NS", "SUMICHEM.NS",
+    "SUNDRMFAST.NS", "SUPREMEIND.NS", "SWANCORP.NS", "SWIGGY.NS", "SYNGENE.NS", "SYRMA.NS", "TARIL.NS", "TATATECH.NS",
+    "TECHNOE.NS", "TEJASNET.NS", "THELEELA.NS", "THERMAX.NS", "TIMKEN.NS", "TITAGARH.NS", "TMPV.NS", "TRIDENT.NS",
+    "TRITURBINE.NS", "TRIVENI.NS", "TTML.NS", "UCOBANK.NS", "UNOMINDA.NS", "USHAMART.NS", "UTIAMC.NS", "VBL.NS",
+    "VENTIVE.NS", "VGUARD.NS", "VIJAYA.NS", "VMM.NS", "VTL.NS", "WELSPUNLIV.NS", "WHIRLPOOL.NS", "WOCKPHARMA.NS",
     "ZEEL.NS", "ZENSARTECH.NS", "ZENTEC.NS", "ZFCVINDIA.NS",
 ])
 
@@ -1262,6 +1260,55 @@ PRIORITY_STOCKS = sorted(set([
     "LTTS.NS","PERSISTENT.NS","COFORGE.NS","MPHASIS.NS","KPITTECH.NS",
     "SUNPHARMA.NS","DRREDDY.NS","CIPLA.NS","DLF.NS","GODREJPROP.NS",
 ]))
+
+# ── Cap Tier Map ────────────────────────────────────────────
+# LARGECAP  = Nifty 50 (safest, lower move but reliable)
+# MIDCAP    = Nifty Midcap 100 + high-vol midcap (higher move, higher risk)
+# SMALLCAP  = below midcap (highest move, highest risk)
+# Used for: tier badge on shortlist cards + BEAR day filter
+_NIFTY_MIDCAP_100 = {
+    'ABCAPITAL','ABFRL','ACC','AFFLE','ALKEM','AMBUJACEM','APOLLOHOSP',
+    'AARTIIND','ASTRAL','ATGL','AUBANK','AUROPHARMA','BANDHANBNK',
+    'BANKBARODA','BEL','BHARATFORG','BHEL','BRIGADE','BSE','CAMS',
+    'CANFINHOME','CDSL','CHOLAFIN','COFORGE','COROMANDEL','CROMPTON',
+    'CUMMINSIND','DELHIVERY','DIXON','DLF','ELGIEQUIP','ESCORTS',
+    'FEDERALBNK','GLENMARK','GODREJPROP','GRANULES','GSPL','HAL',
+    'HAVELLS','HDFCAMC','HUDCO','IDFCFIRSTB','IGL','INDHOTEL',
+    'INDIAMART','INDUSTOWER','IRCTC','JKCEMENT','JSWENERGY','JUBLFOOD',
+    'KALYANKJIL','KPITTECH','LICHSGFIN','LODHA','LTTS','LUPIN',
+    'M&MFIN','MAXHEALTH','MCX','MFSL','MGL','MPHASIS','MUTHOOTFIN',
+    'NAUKRI','NHPC','OBEROIRLTY','OFSS','PAGEIND','PERSISTENT',
+    'PETRONET','PIIND','POLICYBZR','PRESTIGE','PVRINOX',
+    'RBLBANK','RECLTD','RVNL','SAIL','SHRIRAMFIN','SIEMENS',
+    'SRF','SUNDARMFIN','SUNTV','TATACOMM','TATAELXSI','TATAINVEST',
+    'TBOTEK','TIINDIA','TORNTPHARM','TRENT','TVSMOTOR','UBL',
+    'UNIONBANK','UNITDSPR','UPL','VOLTAS','WHIRL','ZOMATO',
+    'ADANIGREEN','ADANIPOWER','IRFC','SJVN','SUZLON','WAAREEENER',
+}
+
+_NIFTY50_SET = {s.replace('.NS','') for s in POPULAR_STOCKS[:49]}
+
+def get_cap_tier(symbol):
+    """Returns LARGECAP / MIDCAP / SMALLCAP for a given symbol."""
+    sym = symbol.replace('.NS','')
+    if sym in _NIFTY50_SET:
+        return 'LARGECAP'
+    if sym in _NIFTY_MIDCAP_100:
+        return 'MIDCAP'
+    return 'SMALLCAP'
+
+CAP_TIER_BADGE = {
+    'LARGECAP':  ('🔵', 'Largecap', '#1d4ed8', '#dbeafe'),
+    'MIDCAP':    ('🟡', 'Midcap',   '#92400e', '#fef3c7'),
+    'SMALLCAP':  ('🟠', 'Smallcap', '#c2410c', '#fff7ed'),
+}
+
+# ── Cap-filtered stock lists ───────────────────────────────
+# Built from POPULAR_STOCKS using get_cap_tier()
+# Used by Scanner, Early Movers, ORB universe selector
+LARGECAP_STOCKS = [s for s in POPULAR_STOCKS if get_cap_tier(s.replace('.NS','')) == 'LARGECAP']
+MIDCAP_STOCKS   = [s for s in POPULAR_STOCKS if get_cap_tier(s.replace('.NS','')) == 'MIDCAP']
+SMALLCAP_STOCKS = [s for s in POPULAR_STOCKS if get_cap_tier(s.replace('.NS','')) == 'SMALLCAP']
 
 # ── Sector map ────────────────────────────────────────────
 SECTOR_MAP = {
@@ -3472,6 +3519,8 @@ with st.sidebar:
         ("🔓  ORB Scanner",   "ORB Scanner"),
         ("💼  Portfolio",     "Portfolio"),
         ("🔔  Alert Log",     "Alert Log"),
+        ("📈  SMA Weekly",    "SMA Weekly"),
+        ("📅  Monthly Swing", "Monthly Swing"),
     ]
     # Inject sidebar button styles once — clean single-item nav
     st.markdown("""
@@ -3559,7 +3608,12 @@ with st.sidebar:
     st.markdown("<hr class='sb-section-divider'>", unsafe_allow_html=True)
     st.markdown("<div class='sb-section-label'>🔍 Scanner</div>", unsafe_allow_html=True)
 
-    scan_mode = st.radio("Mode", ["Full NSE 500", "Custom Watchlist"])
+    scan_mode = st.radio("Universe",
+        ["🔵 Largecap (Nifty 50)",
+         "🟡 Midcap (Nifty Midcap 100)",
+         "🟠 Smallcap",
+         "📊 Nifty 500 (All)",
+         "Custom Watchlist"])
     custom_stocks = []
     if scan_mode == "Custom Watchlist":
         custom_stocks = st.multiselect("Stocks", POPULAR_STOCKS,
@@ -3567,7 +3621,14 @@ with st.sidebar:
         extra = st.text_input("Add symbol", "")
         if extra and extra.upper() not in custom_stocks:
             custom_stocks.append(extra.upper())
-    selected_stocks = custom_stocks if scan_mode == "Custom Watchlist" else POPULAR_STOCKS
+
+    selected_stocks = (
+        LARGECAP_STOCKS  if scan_mode == "🔵 Largecap (Nifty 50)"          else
+        MIDCAP_STOCKS    if scan_mode == "🟡 Midcap (Nifty Midcap 100)"    else
+        SMALLCAP_STOCKS  if scan_mode == "🟠 Smallcap"                     else
+        custom_stocks    if scan_mode == "Custom Watchlist"                  else
+        POPULAR_STOCKS   # Nifty 500 (All)
+    )
 
     min_verdict = st.select_slider("Min Verdict",
         options=["❌ AVOID","⚠️ NEUTRAL","⭐ WATCH","⭐⭐ BUY","⭐⭐⭐ STRONG BUY"],
@@ -3720,6 +3781,8 @@ if active_page == "🌅  Dashboard":
     _show_alertlog    = False
     _show_earlymovers = False
     _show_orb         = False
+    _show_smaweekly   = False
+    _show_monthlyswing= False
 elif active_page == "💼  Portfolio":
     _show_dashboard   = False
     _show_scanner     = False
@@ -3727,6 +3790,8 @@ elif active_page == "💼  Portfolio":
     _show_alertlog    = False
     _show_earlymovers = False
     _show_orb         = False
+    _show_smaweekly   = False
+    _show_monthlyswing= False
 elif active_page == "🔔  Alert Log":
     _show_dashboard   = False
     _show_scanner     = False
@@ -3734,6 +3799,8 @@ elif active_page == "🔔  Alert Log":
     _show_alertlog    = True
     _show_earlymovers = False
     _show_orb         = False
+    _show_smaweekly   = False
+    _show_monthlyswing= False
 elif active_page == "🚀  Early Movers":
     _show_dashboard   = False
     _show_scanner     = False
@@ -3741,6 +3808,8 @@ elif active_page == "🚀  Early Movers":
     _show_alertlog    = False
     _show_earlymovers = True
     _show_orb         = False
+    _show_smaweekly   = False
+    _show_monthlyswing= False
 elif active_page == "🔓  ORB Scanner":
     _show_dashboard   = False
     _show_scanner     = False
@@ -3755,6 +3824,26 @@ elif active_page == "📊  Scanner":
     _show_alertlog    = False
     _show_earlymovers = False
     _show_orb         = False
+    _show_smaweekly   = False
+    _show_monthlyswing= False
+elif active_page == "📈  SMA Weekly":
+    _show_dashboard   = False
+    _show_scanner     = False
+    _show_portfolio   = False
+    _show_alertlog    = False
+    _show_earlymovers = False
+    _show_orb         = False
+    _show_smaweekly   = True
+    _show_monthlyswing= False
+elif active_page == "📅  Monthly Swing":
+    _show_dashboard   = False
+    _show_scanner     = False
+    _show_portfolio   = False
+    _show_alertlog    = False
+    _show_earlymovers = False
+    _show_orb         = False
+    _show_smaweekly   = False
+    _show_monthlyswing= True
 else:
     # Default → Dashboard
     _show_dashboard   = True
@@ -3763,6 +3852,8 @@ else:
     _show_alertlog    = False
     _show_earlymovers = False
     _show_orb         = False
+    _show_smaweekly   = False
+    _show_monthlyswing= False
 
 # ─────────────────────────────────────────────
 #  DASHBOARD PAGE
@@ -3771,13 +3862,30 @@ else:
 # ─────────────────────────────────────────────
 if _show_dashboard:
 
-    st.markdown("""
+    # ── Data source status ────────────────────────────────
+    _dash_kite    = get_kite_client()
+    _dash_kite_on = _dash_kite is not None
+    _dash_src_lbl = 'Kite API — Real-time' if _dash_kite_on else 'yfinance — 15 min delay'
+    _dash_src_clr = '#16a34a' if _dash_kite_on else '#d97706'
+    _dash_src_bg  = '#dcfce7' if _dash_kite_on else '#fef3c7'
+    _dash_src_ico = '🟢' if _dash_kite_on else '🟡'
+
+    st.markdown(f"""
     <div class='topbar'>
         <div>
             <div class='topbar-title'>🌅 Dashboard — Today's Market Intelligence</div>
             <div class='topbar-subtitle'>
                 Pre-market conditions · Global cues · Strategy for today ·
                 Live market state
+            </div>
+        </div>
+        <div style='display:flex;align-items:center;gap:8px'>
+            <div style='background:{_dash_src_bg};border:1px solid {_dash_src_clr}44;
+                        border-radius:8px;padding:6px 14px;text-align:center'>
+                <div style='font-size:10px;font-weight:700;color:{_dash_src_clr};
+                            letter-spacing:1px'>DATA SOURCE</div>
+                <div style='font-size:13px;font-weight:700;color:{_dash_src_clr};
+                            margin-top:2px'>{_dash_src_ico} {_dash_src_lbl}</div>
             </div>
         </div>
     </div>""", unsafe_allow_html=True)
@@ -3821,7 +3929,15 @@ if _show_dashboard:
                 pass
         return _data
 
-    # Nifty + VIX (reuse existing)
+    # Nifty + VIX — auto-fetch on first load if not in session state
+    if 'nifty_context' not in st.session_state or not st.session_state.get('nifty_context'):
+        with st.spinner('🔍 Loading market state...'):
+            _db_kite_init = get_kite_client()
+            _db_ctx_init  = get_nifty_market_state(kite=_db_kite_init)
+            st.session_state['nifty_context']      = _db_ctx_init
+            st.session_state['nifty_market_state'] = _db_ctx_init['state']
+            st.session_state['nifty_ctx_date']     = _db_now.strftime('%Y-%m-%d %H:%M')
+
     _db_mkt_ctx = st.session_state.get('nifty_context', {})
     _db_vix     = _db_mkt_ctx.get('vix')
     _db_vix_lvl = _db_mkt_ctx.get('vix_level', 'UNKNOWN')
@@ -4598,7 +4714,11 @@ if _show_scanner:
     scan_n        = st.session_state.get('scan_total', len(POPULAR_STOCKS))
     scan_duration = st.session_state.get('scan_duration', 0)
     _dur_str      = f" · ⚡ {scan_duration}s" if scan_duration else ""
-    _mkt_status = f"<span class='topbar-time'>● MARKET OPEN</span>" if market_open() else "<span class='topbar-time-closed'>● MARKET CLOSED</span>"
+    _mkt_status   = f"<span class='topbar-time'>● MARKET OPEN</span>" if market_open() else "<span class='topbar-time-closed'>● MARKET CLOSED</span>"
+    _sc_kite_on   = get_kite_client() is not None
+    _sc_src_lbl   = 'Kite — Live' if _sc_kite_on else 'yfinance — Delayed'
+    _sc_src_clr   = '#16a34a' if _sc_kite_on else '#d97706'
+    _sc_src_bg    = '#dcfce7' if _sc_kite_on else '#fef3c7'
     st.markdown(f"""
     <div class='topbar'>
         <div>
@@ -4613,7 +4733,11 @@ if _show_scanner:
             <div class='topbar-subtitle'>{scan_n} stocks · {scan_label or ist_now().strftime('%d %b %Y, %H:%M IST')}{_dur_str}</div>
         </div>
         <div class='topbar-right'>
-            <span class='topbar-badge'>NSE · INTRADAY</span>
+            <span style='background:{_sc_src_bg};color:{_sc_src_clr};font-size:11px;
+                         font-weight:700;border-radius:6px;padding:3px 10px;
+                         border:1px solid {_sc_src_clr}44'>
+                {'🟢' if _sc_kite_on else '🟡'} {_sc_src_lbl}
+            </span>
             {_mkt_status}
         </div>
     </div>
@@ -4882,6 +5006,7 @@ if _show_scanner:
                     'cpr_width':  float(latest['CPR_Width']) if 'CPR_Width' in df.columns and not pd.isna(latest.get('CPR_Width', np.nan)) else None,
                     # ── Priority 4 & 6 fields ──
                     'sector':    SECTOR_MAP.get(sym_clean, ''),
+                    'cap_tier':  get_cap_tier(sym_clean),
                     'gap_pct':   float(((latest['Open'] - prev['Close']) / prev['Close'] * 100))
                                  if not pd.isna(prev['Close']) and prev['Close'] != 0 else 0.0,
                     # Previous day high/low for resistance/support scoring
@@ -5184,7 +5309,19 @@ if _show_scanner:
             _reject_reasons[_sym] = f'R:R {_rr:.1f} < 1.5'
             continue
 
-        # ── Passed all 10 filters ─────────────────────────
+        # ── Filter 11 — BEAR day: Largecap only ──────────
+        # On BEAR days midcap/smallcap losses are much larger
+        # Only allow MIDCAP if RS > 2% (very strong outperformance)
+        _cap_tier = _r.get('cap_tier', get_cap_tier(_sym))
+        if _nifty_state == 'BEAR':
+            if _cap_tier == 'SMALLCAP':
+                _reject_reasons[_sym] = 'BEAR day — Smallcap blocked (too risky)'
+                continue
+            if _cap_tier == 'MIDCAP' and _rs < 2.0:
+                _reject_reasons[_sym] = f'BEAR day — Midcap RS {_rs:.1f}% < 2% required'
+                continue
+
+        # ── Passed all 11 filters ─────────────────────────
         _cpr_ok  = _cpr_w is not None and _cpr_w < 0.6
         _mtf_key = f"mtf_{_r['symbol']}_{interval}"
         _align   = st.session_state.get(_mtf_key, {}).get('alignment', 'UNKNOWN')
@@ -5222,7 +5359,8 @@ if _show_scanner:
             'adj_inv':   _adj_inv,       # adjusted investment
             'pos_mult':  _pos_mult,      # 0.25 to 1.0
             'pos_lbl':   _pos_lbl,       # "70% size — Bull + High VIX"
-            'pos_clr':   _pos_clr,       # colour for display
+            'pos_clr':   _pos_clr,
+            'cap_tier':  _cap_tier,
             'rr':        _rr,
             'sl_dist':   _sl_dist,
             'investment':_f(_tp.get('investment', 0)),
@@ -5309,6 +5447,17 @@ if _show_scanner:
             _t1_pct = round((_t1 - _entry) / _entry * 100, 2)    if _entry > 0 else 0
             _t2_pct = round((_t2 - _entry) / _entry * 100, 2)    if _entry > 0 else 0
 
+            # Cap tier badge
+            _cap     = _sl.get('cap_tier', 'SMALLCAP')
+            _cap_ico, _cap_name, _cap_clr, _cap_bg = CAP_TIER_BADGE.get(
+                _cap, ('🟠', 'Smallcap', '#c2410c', '#fff7ed'))
+            _cap_badge = (
+                f"<span style='background:{_cap_bg};color:{_cap_clr};"
+                f"font-size:10px;font-weight:700;border-radius:4px;"
+                f"padding:2px 8px;border:1px solid {_cap_clr}44;margin-left:6px'>"
+                f"{_cap_ico} {_cap_name}</span>"
+            )
+
             # Rank badge colour
             _rb = {1:"#f59e0b",2:"#94a3b8",3:"#b45309"}.get(_rank,"#e2e8f0")
             _rt = {1:"#1a2035",2:"#ffffff",3:"#ffffff"}.get(_rank,"#64748b")
@@ -5347,6 +5496,7 @@ if _show_scanner:
                                              border:1px solid {_pos_clr}44'>
                                     💰 {_pos_lbl}
                                 </span>
+                                {_cap_badge}
                             </div>
                         </div>
                     </div>
@@ -6804,14 +6954,28 @@ if _show_scanner:
 #  Opening Range Breakout — standalone page
 # ─────────────────────────────────────────────
 if _show_orb:
+    _orb_kite_on = get_kite_client() is not None
+    _orb_src_lbl = 'Kite API — Real-time' if _orb_kite_on else 'yfinance — 15 min delay'
+    _orb_src_clr = '#16a34a' if _orb_kite_on else '#d97706'
+    _orb_src_bg  = '#dcfce7' if _orb_kite_on else '#fef3c7'
+    _orb_src_ico = '🟢' if _orb_kite_on else '🟡'
 
-    st.markdown("""
+    st.markdown(f"""
     <div class='topbar'>
         <div>
             <div class='topbar-title'>🔓 Opening Range Breakout Scanner</div>
             <div class='topbar-subtitle'>
                 Catches stocks that break above their first-candle high ·
                 5 breakout rules · Best used 9:20 AM – 10:30 AM
+            </div>
+        </div>
+        <div style='display:flex;align-items:center'>
+            <div style='background:{_orb_src_bg};border:1px solid {_orb_src_clr}44;
+                        border-radius:8px;padding:5px 12px;text-align:center'>
+                <div style='font-size:10px;font-weight:700;color:{_orb_src_clr};
+                            letter-spacing:1px'>DATA SOURCE</div>
+                <div style='font-size:12px;font-weight:700;color:{_orb_src_clr};
+                            margin-top:2px'>{_orb_src_ico} {_orb_src_lbl}</div>
             </div>
         </div>
     </div>""", unsafe_allow_html=True)
@@ -6893,16 +7057,25 @@ if _show_orb:
     with _ob1:
         _orb_universe = st.radio(
             "Scan universe",
-            ["Full NSE 500", "Top 100 Early Mover Stocks", "Custom Watchlist"],
+            ["🔵 Largecap (Nifty 50)",
+             "🟡 Midcap (Nifty Midcap 100)",
+             "🟠 Smallcap",
+             "📊 Nifty 500 (All)",
+             "Custom Watchlist"],
             horizontal=True, key="orb_page_universe",
-            help="Full NSE 500 = ~90s — catches all active stocks. Top 100 = ~30s but misses many.")
-        _orb_count = (len(EARLY_MOVER_STOCKS) if _orb_universe == "Top 100 Early Mover Stocks"
-                      else len(selected_stocks) if _orb_universe == "Custom Watchlist"
-                      else len(POPULAR_STOCKS))
+            help="Largecap = ~15s · Midcap = ~40s · Smallcap = ~55s · Nifty 500 = ~90s")
+        _orb_stocks_universe = (
+            LARGECAP_STOCKS  if _orb_universe == "🔵 Largecap (Nifty 50)"       else
+            MIDCAP_STOCKS    if _orb_universe == "🟡 Midcap (Nifty Midcap 100)" else
+            SMALLCAP_STOCKS  if _orb_universe == "🟠 Smallcap"                  else
+            selected_stocks  if _orb_universe == "Custom Watchlist"              else
+            POPULAR_STOCKS
+        )
+        _orb_count = len(_orb_stocks_universe)
         st.markdown(
             f"<div style='font-size:11px;color:#64748b;margin-top:-8px'>"
             f"⚡ {_orb_count} stocks · "
-            f"{'~30 sec' if _orb_count <= 120 else '~60 sec' if _orb_count <= 250 else '~90 sec'}"
+            f"{'~15 sec' if _orb_count <= 60 else '~40 sec' if _orb_count <= 150 else '~60 sec' if _orb_count <= 250 else '~90 sec'}"
             f" · <b style='color:#0369a1'>5-min candles (hardcoded — optimal for ORB)</b>"
             f"</div>", unsafe_allow_html=True)
     with _ob2:
@@ -6915,9 +7088,7 @@ if _show_orb:
 
     # ── Run scan ──────────────────────────────────────────
     if _run_orb_page:
-        _orb_stocks = (EARLY_MOVER_STOCKS  if _orb_universe == "Top 100 Early Mover Stocks"
-                       else selected_stocks if _orb_universe == "Custom Watchlist"
-                       else POPULAR_STOCKS)
+        _orb_stocks = _orb_stocks_universe
         _kite_orb_pg = get_kite_client()
         _port_orb_pg = load_portfolio()
 
@@ -7162,6 +7333,16 @@ if _show_earlymovers:
         "Gap-up stocks with volume explosion · No indicators needed · Best used 9:15 AM – 9:30 AM"
     )
     _em_topbar_clr = "#f59e0b" if _is_expiry else "rgba(255,255,255,0.6)"
+    _em_kite_on    = get_kite_client() is not None
+    _em_src_lbl    = 'Kite API — Real-time' if _em_kite_on else 'yfinance — 15 min delay'
+    _em_src_clr    = '#16a34a' if _em_kite_on else '#d97706'
+    _em_src_bg     = '#dcfce7' if _em_kite_on else '#fef3c7'
+    _em_src_ico    = '🟢' if _em_kite_on else '🟡'
+    _em_expiry_badge = (
+        "<div class='topbar-badge' style='background:rgba(239,68,68,0.2);"
+        "color:#fca5a5;border-color:rgba(239,68,68,0.4)'>⚠️ EXPIRY DAY</div>"
+        if _is_expiry else ""
+    )
     st.markdown(f"""
     <div class='topbar'>
         <div>
@@ -7170,7 +7351,16 @@ if _show_earlymovers:
                 {_em_topbar_sub}
             </div>
         </div>
-        {"<div class='topbar-badge' style='background:rgba(239,68,68,0.2);color:#fca5a5;border-color:rgba(239,68,68,0.4)'>⚠️ EXPIRY DAY</div>" if _is_expiry else ""}
+        <div style='display:flex;align-items:center;gap:8px'>
+            <div style='background:{_em_src_bg};border:1px solid {_em_src_clr}44;
+                        border-radius:8px;padding:5px 12px;text-align:center'>
+                <div style='font-size:10px;font-weight:700;color:{_em_src_clr};
+                            letter-spacing:1px'>DATA SOURCE</div>
+                <div style='font-size:12px;font-weight:700;color:{_em_src_clr};
+                            margin-top:2px'>{_em_src_ico} {_em_src_lbl}</div>
+            </div>
+            {_em_expiry_badge}
+        </div>
     </div>""", unsafe_allow_html=True)
 
     # ══════════════════════════════════════════════════════
@@ -7355,12 +7545,21 @@ if _show_earlymovers:
     with _em_c1:
         _em_universe = st.radio(
             "Scan universe",
-            ["Full NSE 500", "Top 100 Early Mover Stocks", "Custom Watchlist"],
+            ["🔵 Largecap (Nifty 50)",
+             "🟡 Midcap (Nifty Midcap 100)",
+             "🟠 Smallcap",
+             "📊 Nifty 500 (All)",
+             "Custom Watchlist"],
             horizontal=True, key="em_universe",
-            help="Full NSE 500 = ~90s — catches all active stocks including AARTIIND, ABCAPITAL etc. Top 100 = ~30s.")
-        _em_count = (len(EARLY_MOVER_STOCKS) if _em_universe == "Top 100 Early Mover Stocks"
-                     else len(selected_stocks) if _em_universe == "Custom Watchlist"
-                     else len(POPULAR_STOCKS))
+            help="Largecap = ~15s · Midcap = ~40s · Nifty 500 = ~90s")
+        _em_stocks_universe = (
+            LARGECAP_STOCKS  if _em_universe == "🔵 Largecap (Nifty 50)"       else
+            MIDCAP_STOCKS    if _em_universe == "🟡 Midcap (Nifty Midcap 100)" else
+            SMALLCAP_STOCKS  if _em_universe == "🟠 Smallcap"                  else
+            selected_stocks  if _em_universe == "Custom Watchlist"              else
+            POPULAR_STOCKS
+        )
+        _em_count = len(_em_stocks_universe)
         st.markdown(
             f"<div style='font-size:11px;color:#64748b;margin-top:-8px'>"
             f"⚡ {_em_count} stocks · "
@@ -7569,9 +7768,7 @@ if _show_earlymovers:
 
     # ── Run scan ──────────────────────────────────────────
     if _run_em:
-        _em_stocks = (EARLY_MOVER_STOCKS  if _em_universe == "Top 100 Early Mover Stocks"
-                      else selected_stocks if _em_universe == "Custom Watchlist"
-                      else POPULAR_STOCKS)
+        _em_stocks = _em_stocks_universe
         _kite_em   = get_kite_client()
         with st.spinner(""):
             _em_results = scan_early_movers(
@@ -7894,11 +8091,25 @@ if _show_earlymovers:
         _em_status_clr = "#64748b"
         _em_status_bg  = "#f8fafc"
 if _show_portfolio:
-    st.markdown("""
+    _pf_kite_on  = get_kite_client() is not None
+    _pf_src_lbl  = 'Kite API — Real-time' if _pf_kite_on else 'yfinance — 15 min delay'
+    _pf_src_clr  = '#16a34a' if _pf_kite_on else '#d97706'
+    _pf_src_bg   = '#dcfce7' if _pf_kite_on else '#fef3c7'
+    _pf_src_ico  = '🟢' if _pf_kite_on else '🟡'
+    st.markdown(f"""
     <div class='topbar'>
         <div>
             <div class='topbar-title'>💼 Intraday Paper Portfolio</div>
             <div class='topbar-subtitle'>Track your intraday paper trades</div>
+        </div>
+        <div style='display:flex;align-items:center'>
+            <div style='background:{_pf_src_bg};border:1px solid {_pf_src_clr}44;
+                        border-radius:8px;padding:5px 12px;text-align:center'>
+                <div style='font-size:10px;font-weight:700;color:{_pf_src_clr};
+                            letter-spacing:1px'>PRICE SOURCE</div>
+                <div style='font-size:12px;font-weight:700;color:{_pf_src_clr};
+                            margin-top:2px'>{_pf_src_ico} {_pf_src_lbl}</div>
+            </div>
         </div>
     </div>""", unsafe_allow_html=True)
 
@@ -7924,8 +8135,11 @@ if _show_portfolio:
         st.session_state['pf_auto_refresh'] = _pf_auto
     with _pf_col1:
         _pf_last = st.session_state.get('pf_last_refresh', '—')
+        _pf_src  = st.session_state.get('pf_price_source', 'yfinance')
+        _src_clr = '#16a34a' if _pf_src == 'kite' else '#d97706'
         st.markdown(f"<div style='font-size:11px;color:#94a3b8;padding:10px 0'>"
-                    f"Live prices · Last refreshed: {_pf_last}</div>",
+                    f"<span style='color:{_src_clr};font-weight:700'>{_pf_src.upper()}</span>"
+                    f" · Last refreshed: {_pf_last}</div>",
                     unsafe_allow_html=True)
 
     # Auto-refresh every 30s if enabled and market open
@@ -7946,6 +8160,20 @@ if _show_portfolio:
             _s = p.get('symbol', '')
             if _s and _s not in _new_prices:
                 try:
+                    # ── Kite first (real-time LTP) ────────────────────
+                    _kite_pf = get_kite_client()
+                    if _kite_pf is not None:
+                        try:
+                            _token = get_instrument_token(_kite_pf, _s + '.NS' if not _s.endswith('.NS') else _s)
+                            if _token is not None:
+                                _ltp_data = _kite_pf.ltp([f'NSE:{_s}'])
+                                _ltp_key  = f'NSE:{_s}'
+                                if _ltp_key in _ltp_data:
+                                    _new_prices[_s] = float(_ltp_data[_ltp_key]['last_price'])
+                                    continue
+                        except Exception:
+                            pass  # fall through to yfinance
+                    # ── yfinance fallback ─────────────────────────────
                     _ticker_s = _s + '.NS' if not _s.endswith('.NS') else _s
                     _ph = yf.Ticker(_ticker_s).history(period='1d', interval='1m')
                     _new_prices[_s] = float(_ph['Close'].iloc[-1]) if not _ph.empty else _f(p.get('entry', 0))
@@ -7954,6 +8182,7 @@ if _show_portfolio:
         st.session_state['pf_live_prices']    = _new_prices
         st.session_state['pf_last_refresh']   = ist_now().strftime('%H:%M:%S IST')
         st.session_state['pf_last_refresh_ts']= time.time()
+        st.session_state['pf_price_source']   = 'kite' if get_kite_client() is not None else 'yfinance'
         _pf_prices = _new_prices
         _fetch_spinner.empty()
         # If auto-refresh triggered this fetch → rerun to update UI
@@ -8334,3 +8563,1544 @@ if _show_alertlog:
     st.markdown("<br>", unsafe_allow_html=True)
     if st.button("🗑️ Clear All Alerts", key="clear_all_alerts"):
         st.session_state[ALERT_LOG_KEY] = []; st.rerun()
+
+# ─────────────────────────────────────────────────────────────
+#  SMA WEEKLY SCANNER
+#  Short-term swing trades (3–7 days hold)
+#  Strategy: SMA20 + SMA50 crossover on daily chart
+#  ATR-based SL and targets
+# ─────────────────────────────────────────────────────────────
+
+if _show_smaweekly:
+
+    # ── Data source badge ─────────────────────────────────
+    _sw_kite_on  = get_kite_client() is not None
+    _sw_src_lbl  = 'Kite API — Real-time' if _sw_kite_on else 'yfinance — Daily data'
+    _sw_src_clr  = '#16a34a' if _sw_kite_on else '#d97706'
+    _sw_src_bg   = '#dcfce7' if _sw_kite_on else '#fef3c7'
+    _sw_src_ico  = '🟢' if _sw_kite_on else '🟡'
+
+    st.markdown(f"""
+    <div class='topbar'>
+        <div>
+            <div class='topbar-title'>📈 SMA Weekly — Short Term Swing Scanner</div>
+            <div class='topbar-subtitle'>
+                SMA 20 + SMA 50 crossover · Daily chart · Hold 3–7 days ·
+                ATR-based SL and targets
+            </div>
+        </div>
+        <div style='display:flex;align-items:center'>
+            <div style='background:{_sw_src_bg};border:1px solid {_sw_src_clr}44;
+                        border-radius:8px;padding:5px 12px;text-align:center'>
+                <div style='font-size:10px;font-weight:700;color:{_sw_src_clr};
+                            letter-spacing:1px'>DATA SOURCE</div>
+                <div style='font-size:12px;font-weight:700;color:{_sw_src_clr};
+                            margin-top:2px'>{_sw_src_ico} {_sw_src_lbl}</div>
+            </div>
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+    # ── Strategy explanation ──────────────────────────────
+    st.markdown("""
+    <div style='display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap'>
+        <div style='flex:1;min-width:160px;background:#eff6ff;border-radius:10px;
+                    padding:12px 14px;border:1px solid #bfdbfe44'>
+            <div style='font-size:20px;margin-bottom:6px'>🔀</div>
+            <div style='font-size:12px;font-weight:700;color:#1d4ed8'>Signal 1 — Fresh Cross</div>
+            <div style='font-size:11px;color:#1e40af;margin-top:3px'>
+                SMA20 crossed above SMA50 in last 5 days.<br>
+                Price above both SMAs. Highest score bonus.
+            </div>
+        </div>
+        <div style='flex:1;min-width:160px;background:#f5f3ff;border-radius:10px;
+                    padding:12px 14px;border:1px solid #ddd6fe44'>
+            <div style='font-size:20px;margin-bottom:6px'>📉</div>
+            <div style='font-size:12px;font-weight:700;color:#7c3aed'>Signal 2 — Pullback Bounce</div>
+            <div style='font-size:11px;color:#6d28d9;margin-top:3px'>
+                SMA20 already above SMA50 (5+ days).<br>
+                Price pulled back to SMA20 and bouncing.
+            </div>
+        </div>
+        <div style='flex:1;min-width:160px;background:#f0fdf4;border-radius:10px;
+                    padding:12px 14px;border:1px solid #bbf7d044'>
+            <div style='font-size:20px;margin-bottom:6px'>🎯</div>
+            <div style='font-size:12px;font-weight:700;color:#15803d'>Targets — Weekly ATR</div>
+            <div style='font-size:11px;color:#166534;margin-top:3px'>
+                Uses actual weekly candle ATR-7<br>
+                T1 = Entry + 0.5× weekly ATR (+3–5%)<br>
+                T2 = Entry + 1.0× weekly ATR (+6–10%)<br>
+                T3 = Entry + 1.5× weekly ATR (+9–15%)
+            </div>
+        </div>
+        <div style='flex:1;min-width:160px;background:#fff5f5;border-radius:10px;
+                    padding:12px 14px;border:1px solid #fecaca44'>
+            <div style='font-size:20px;margin-bottom:6px'>🛑</div>
+            <div style='font-size:12px;font-weight:700;color:#dc2626'>Stop Loss — ATR Based</div>
+            <div style='font-size:11px;color:#991b1b;margin-top:3px'>
+                SL = 1.5% below SMA20<br>
+                    Or if SMA20 is far — ATR-7 based
+            </div>
+        </div>
+        <div style='flex:1;min-width:160px;background:#fffbeb;border-radius:10px;
+                    padding:12px 14px;border:1px solid #fde68a44'>
+            <div style='font-size:20px;margin-bottom:6px'>⏱️</div>
+            <div style='font-size:12px;font-weight:700;color:#d97706'>Hold Time</div>
+            <div style='font-size:11px;color:#92400e;margin-top:3px'>
+                3–7 trading days<br>
+                Exit at T1 or T2. Never hold > 10 days.
+            </div>
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+    # ── Controls ──────────────────────────────────────────
+    _sw_c1, _sw_c2, _sw_c3 = st.columns([2, 1, 1])
+    with _sw_c1:
+        _sw_universe = st.radio(
+            "Universe",
+            ["🔵 Largecap (Nifty 50)",
+             "🟡 Midcap (Nifty Midcap 100)",
+             "🟠 Smallcap",
+             "📊 Nifty 500 (All)"],
+            horizontal=True, key="sw_universe",
+            help="Largecap = safer weekly trades. Midcap = higher returns.")
+        _sw_stocks = (
+            LARGECAP_STOCKS if _sw_universe == "🔵 Largecap (Nifty 50)"       else
+            MIDCAP_STOCKS   if _sw_universe == "🟡 Midcap (Nifty Midcap 100)" else
+            SMALLCAP_STOCKS if _sw_universe == "🟠 Smallcap"                  else
+            POPULAR_STOCKS
+        )
+        st.markdown(
+            f"<div style='font-size:11px;color:#64748b;margin-top:-8px'>"
+            f"⚡ {len(_sw_stocks)} stocks · Daily chart · SMA20 + SMA50</div>",
+            unsafe_allow_html=True)
+
+    with _sw_c2:
+        _sw_capital = st.number_input(
+            "Capital ₹", min_value=50000, max_value=2000000,
+            value=200000, step=50000, format="%d", key="sw_capital",
+            help="Capital per trade for weekly swing")
+
+    with _sw_c3:
+        _sw_risk_pct = st.number_input(
+            "Risk %", min_value=0.5, max_value=3.0,
+            value=1.5, step=0.5, format="%.1f", key="sw_risk_pct",
+            help="Max risk per trade as % of capital")
+
+    # Min score filter
+    _sw_min_score = st.slider(
+        "Min signal score", min_value=50, max_value=90, value=65,
+        step=5, key="sw_min_score",
+        help="Higher = fewer but stronger signals")
+
+    # ── Scan function ─────────────────────────────────────
+    def scan_sma_weekly(stocks, capital, risk_pct, min_score, mode):
+        """
+        Mode 1 - Fresh Cross (5-day window)
+        Mode 2 - Trend + Pullback (recommended, more signals)
+          SMA20 > SMA50 established for 5+ days
+          Price touched SMA20 within last 5 days
+          Now bouncing above SMA20 with volume
+        """
+        results     = []
+        total       = len(stocks)
+        _prog_sw    = st.progress(0, text="📈 Scanning SMA20 + SMA50 signals...")
+        _stat_sw    = st.empty()
+
+        for idx, symbol in enumerate(stocks):
+            pct       = int(((idx + 1) / total) * 100)
+            sym_clean = symbol.replace('.NS', '')
+            _prog_sw.progress(pct, text=f"📈 {idx+1}/{total} · {sym_clean}")
+
+            try:
+                # ── Fetch daily data — for signals ────────
+                _ticker_sym = symbol if symbol.endswith('.NS') else symbol + '.NS'
+                try:
+                    import yfinance as _yf_sw
+                    _t = _yf_sw.Ticker(_ticker_sym)
+                    df = _t.history(
+                        period='1y',
+                        interval='1d',
+                        auto_adjust=True,
+                        actions=False,
+                        prepost=False,
+                    )
+                except Exception:
+                    continue
+                if df is None or len(df) < 60:
+                    continue
+                df.columns = [c.split(' ')[0] if ' ' in str(c) else c for c in df.columns]
+                df = df[['Open','High','Low','Close','Volume']].dropna()
+                src_lbl = 'yfinance'
+
+                # ── Fetch weekly data — for ATR only ──────
+                # Weekly candle = actual 5-day High-Low range
+                # More accurate for weekly swing trade targets
+                # than daily ATR × multiplier
+                _wk_atr = None
+                try:
+                    _df_wk = _t.history(
+                        period='1y',
+                        interval='1wk',
+                        auto_adjust=True,
+                        actions=False,
+                    )
+                    if _df_wk is not None and len(_df_wk) >= 8:
+                        _df_wk.columns = [c.split(' ')[0] if ' ' in str(c) else c
+                                          for c in _df_wk.columns]
+                        _df_wk = _df_wk[['High','Low','Close']].dropna()
+                        _wk_hl  = _df_wk['High'] - _df_wk['Low']
+                        _wk_hpc = (_df_wk['High'] - _df_wk['Close'].shift(1)).abs()
+                        _wk_lpc = (_df_wk['Low']  - _df_wk['Close'].shift(1)).abs()
+                        _wk_tr  = pd.concat([_wk_hl, _wk_hpc, _wk_lpc], axis=1).max(axis=1)
+                        _wk_atr = round(float(_wk_tr.rolling(7).mean().iloc[-1]), 2)
+                except Exception:
+                    pass
+                    continue
+                df.columns = [c.split(' ')[0] if ' ' in str(c) else c for c in df.columns]
+                df = df[['Open','High','Low','Close','Volume']].dropna()
+                src_lbl = 'yfinance'
+
+                if len(df) < 55:
+                    continue
+
+                # ── Indicators ───────────────────────────
+                df['SMA20']  = df['Close'].rolling(20).mean()
+                df['SMA50']  = df['Close'].rolling(50).mean()
+                df['HL']     = df['High'] - df['Low']
+                df['HPC']    = (df['High'] - df['Close'].shift(1)).abs()
+                df['LPC']    = (df['Low']  - df['Close'].shift(1)).abs()
+                df['TR']     = df[['HL','HPC','LPC']].max(axis=1)
+                df['ATR7']   = df['TR'].rolling(7).mean()
+                df['ATR14']  = df['TR'].rolling(14).mean()
+                df['VOL_MA'] = df['Volume'].rolling(20).mean()
+                df['RSI14']  = 100 - (100 / (1 + (
+                    df['Close'].diff().clip(lower=0).rolling(14).mean() /
+                    (-df['Close'].diff().clip(upper=0)).rolling(14).mean()
+                )))
+
+                latest   = df.iloc[-1]
+                prev     = df.iloc[-2]
+                prev2    = df.iloc[-3]
+                prev3    = df.iloc[-4]
+
+                sma20    = float(latest['SMA20'])
+                sma50    = float(latest['SMA50'])
+                sma20_p  = float(prev['SMA20'])
+                sma50_p  = float(prev['SMA50'])
+                close    = float(latest['Close'])
+                # Use min(ATR-7, ATR-14) to prevent spike inflation
+                # ATR-7: recent volatility (responsive, good for weekly targets)
+                # ATR-14: smoother (prevents inflated targets from single volatile week)
+                # min() takes the smaller → tighter, more achievable targets
+                _atr7    = float(latest['ATR7'])
+                _atr14   = float(latest['ATR14'])
+                _daily_atr = round(min(_atr7, _atr14), 2)
+
+                # Use weekly ATR if available — more accurate for 3-7 day targets
+                # Weekly ATR = actual High-Low range of a full 5-day candle
+                # Fallback to daily ATR × 2.0 if weekly fetch failed
+                if _wk_atr and _wk_atr > 0 and not pd.isna(_wk_atr):
+                    atr = _wk_atr
+                    _atr_label = 'weekly'
+                else:
+                    atr = round(_daily_atr * 2.0, 2)
+                    _atr_label = 'est.weekly'
+                vol      = float(latest['Volume'])
+                vol_ma   = float(latest['VOL_MA'])
+                rsi      = float(latest['RSI14'])
+
+                if any(pd.isna(x) for x in [sma20, sma50, atr, vol_ma]) or atr <= 0:
+                    continue
+
+                vol_ratio   = vol / vol_ma if vol_ma > 0 else 1.0
+                pct_above   = (close - sma20) / sma20 * 100 if sma20 > 0 else 0
+
+                # ── Check 1: Fresh Cross (SMA20 crossed SMA50 in last 5 days) ──
+                cross_today = sma20 > sma50 and sma20_p <= float(prev['SMA50'])
+                cross_1d    = float(prev['SMA20']) > float(prev['SMA50']) and float(prev2['SMA20']) <= float(prev2['SMA50'])
+                cross_2d    = float(prev2['SMA20']) > float(prev2['SMA50']) and float(prev3['SMA20']) <= float(prev3['SMA50'])
+                cross_3d    = float(prev3['SMA20']) > float(prev3['SMA50']) and len(df)>5 and float(df['SMA20'].iloc[-5]) <= float(df['SMA50'].iloc[-5])
+                cross_4d    = len(df)>6 and float(df['SMA20'].iloc[-5]) > float(df['SMA50'].iloc[-5]) and float(df['SMA20'].iloc[-6]) <= float(df['SMA50'].iloc[-6])
+                has_fresh_cross = cross_today or cross_1d or cross_2d or cross_3d or cross_4d
+                cross_age   = (0 if cross_today else 1 if cross_1d else 2 if cross_2d else 3 if cross_3d else 4) if has_fresh_cross else 99
+
+                # ── SMA20 slope gate (HARD FILTER) ────────
+                # SMA20 must be RISING — declining SMA20 means
+                # momentum is weakening regardless of being above SMA50
+                # This was the APARINDS bug — SMA20 declining but still
+                # above SMA50 so it passed. Now rejected.
+                _sma20_5d    = float(df['SMA20'].iloc[-5]) if len(df) >= 5 else sma20
+                _sma20_slope = (sma20 - _sma20_5d) / _sma20_5d * 100 if _sma20_5d > 0 else 0
+                if _sma20_slope <= 0:
+                    continue  # SMA20 declining or flat → skip, not a valid uptrend
+
+                # ── Check 2: Pullback to SMA20 and bouncing ──
+                trend_days   = 0
+                pullback_found = False
+                pullback_age   = 0
+
+                if sma20 > sma50:
+                    # Count consecutive days SMA20 > SMA50
+                    for i in range(1, min(30, len(df))):
+                        if float(df['SMA20'].iloc[-i]) > float(df['SMA50'].iloc[-i]):
+                            trend_days += 1
+                        else:
+                            break
+
+                    # Also verify SMA50 is rising (healthy trend)
+                    _sma50_5d    = float(df['SMA50'].iloc[-5]) if len(df) >= 5 else sma50
+                    _sma50_slope = (sma50 - _sma50_5d) / _sma50_5d * 100 if _sma50_5d > 0 else 0
+                    # If SMA50 declining sharply → weak trend
+                    if _sma50_slope < -0.5:
+                        continue  # both SMAs declining → not an uptrend
+
+                    if trend_days >= 5:
+                        for i in range(1, 6):
+                            row_low = float(df['Low'].iloc[-i])
+                            row_sma = float(df['SMA20'].iloc[-i])
+                            if abs(row_low - row_sma) / row_sma * 100 <= 1.5 or row_low <= row_sma:
+                                pullback_found = True
+                                pullback_age   = i
+                                break
+
+                has_pullback = pullback_found and close >= sma20 * 1.002 and pct_above <= 5
+
+                # ── Must have at least one signal ────────
+                if not has_fresh_cross and not has_pullback:
+                    continue
+
+                # Price must be above both SMAs
+                if close <= sma20 or close <= sma50:
+                    continue
+
+                # ── Signal label ──────────────────────────
+                if has_fresh_cross and has_pullback:
+                    signal_label = f"🔥 Fresh cross {cross_age}d ago + pullback bounce"
+                    signal_type  = 'both'
+                elif has_fresh_cross:
+                    signal_label = f"🔀 Fresh cross {cross_age}d ago"
+                    signal_type  = 'cross'
+                else:
+                    signal_label = f"📉 Pullback {pullback_age}d ago · bouncing"
+                    signal_type  = 'pullback'
+
+                # ── Scoring ──────────────────────────────
+                score = 0
+                pct_above_sma20 = (close - sma20) / sma20 * 100 if sma20 > 0 else 0
+                pct_above_sma50 = (close - sma50) / sma50 * 100 if sma50 > 0 else 0
+
+                # ── Pre-compute missing factors ───────────
+
+                # Factor 1: Higher Highs over last 3 weeks
+                # Each week = 5 trading days
+                _w1h = float(df['High'].iloc[-5:].max())    # this week
+                _w2h = float(df['High'].iloc[-10:-5].max()) # last week
+                _w3h = float(df['High'].iloc[-15:-10].max())# 2 weeks ago
+                _hh  = _w1h > _w2h > _w3h                  # true uptrend
+
+                # Factor 2: Higher Lows over last 3 weeks
+                _w1l = float(df['Low'].iloc[-5:].min())
+                _w2l = float(df['Low'].iloc[-10:-5].min())
+                _w3l = float(df['Low'].iloc[-15:-10].min())
+                _hl  = _w1l > _w2l > _w3l                  # buyers defending higher levels
+
+                # Factor 3: SMA20 slope strength (5-day change %)
+                # Already computed as _sma20_slope above
+                # Binary check already done (slope > 0 = hard gate)
+                # Now SCORE how strong the rise is
+
+                # Factor 4: Price vs SMA50 distance
+                # If price is >15% above SMA50 = extended = risky entry
+                # Penalise extended stocks — better to wait for pullback
+                _extended = pct_above_sma50 > 15
+
+                # ── Signal type bonus (max 30) ────────────
+                _cross_bonus = (25 if cross_age == 0 else 20 if cross_age == 1 else
+                                15 if cross_age == 2 else 10 if cross_age == 3 else 5) if has_fresh_cross else 0
+                _pb_bonus    = (25 if pullback_age == 1 else 20 if pullback_age == 2 else
+                                15 if pullback_age == 3 else 8) if has_pullback else 0
+                if signal_type == 'both':
+                    score += min(30, max(_cross_bonus, _pb_bonus) + 5)
+                elif signal_type == 'cross':
+                    score += _cross_bonus
+                else:
+                    score += _pb_bonus
+
+                # ── Price position vs SMA20 (max 20) ─────
+                score += (20 if pct_above_sma20 <= 1 else 15 if pct_above_sma20 <= 2 else
+                          10 if pct_above_sma20 <= 3 else 5 if pct_above_sma20 <= 5 else 0)
+
+                # ── Trend days (max 10) ───────────────────
+                score += (10 if trend_days >= 20 else 7 if trend_days >= 10 else
+                          4 if trend_days >= 5 else 0)
+
+                # ── RSI (max 15) ──────────────────────────
+                score += (15 if 45 <= rsi <= 65 else
+                          8 if 40 <= rsi < 45 or 65 < rsi <= 70 else 0)
+
+                # ── Volume (max 15) ───────────────────────
+                score += (15 if vol_ratio >= 2.0 else 10 if vol_ratio >= 1.5 else
+                          5 if vol_ratio >= 1.0 else 0)
+
+                # ── SMA gap widening (max 10) ─────────────
+                gap_now  = (sma20 - sma50) / sma50 * 100
+                gap_prev = (sma20_p - sma50_p) / sma50_p * 100 if sma50_p > 0 else 0
+                if gap_now > gap_prev:
+                    score += 10
+
+                # ── NEW: Higher Highs (max 10) ────────────
+                # Both HH and HL together = full classical uptrend structure
+                # Only HH = partial confirmation
+                if _hh and _hl:
+                    score += 10   # both confirmed = strongest trend
+                elif _hh:
+                    score += 6    # only higher highs
+                elif _hl:
+                    score += 4    # only higher lows
+
+                # ── NEW: SMA20 slope strength (max 10) ────
+                # Hard gate already ensured slope > 0
+                # Now reward HOW STRONGLY SMA20 is rising
+                score += (10 if _sma20_slope >= 1.0 else
+                          7  if _sma20_slope >= 0.5 else
+                          4  if _sma20_slope >= 0.2 else 1)
+
+                # ── NEW: Price vs SMA50 distance penalty ──
+                # Extended stocks (>15% above SMA50) are risky entries
+                # Likely due for a deeper correction, not a shallow pullback
+                if _extended:
+                    score -= 15   # strong penalty — avoid chasing extended moves
+                elif pct_above_sma50 > 10:
+                    score -= 5    # mild penalty — slightly extended
+
+                if score < min_score:
+                    continue
+
+                # ── Trade plan ───────────────────────────
+                entry  = close
+                # Pullback/cross: SL just below SMA20 (tight)
+                sl     = round(sma20 * 0.985, 2)
+                risk_d = entry - sl
+                if risk_d <= 0:
+                    continue
+
+                # Weekly ATR targets — correct for 3-7 day hold
+                # T1 = 0.5× weekly ATR (+3-5%)  realistic first target
+                # T2 = 1.0× weekly ATR (+6-10%) good trade
+                # T3 = 1.5× weekly ATR (+9-15%) stretch
+                t1     = round(entry + 0.5 * atr, 2)
+                t2     = round(entry + 1.0 * atr, 2)
+                t3     = round(entry + 1.5 * atr, 2)
+                qty    = max(1, int((capital * risk_pct / 100) / risk_d))
+                inv    = round(entry * qty, 2)
+                rr_t1  = round((t1 - entry) / risk_d, 1)
+                rr_t2  = round((t2 - entry) / risk_d, 1)
+                wchg   = round((close - float(df.iloc[-6]['Close'])) / float(df.iloc[-6]['Close']) * 100, 2) if len(df) >= 6 else 0.0
+                sma20_sl = round((sma20 - float(df['SMA20'].iloc[-5])) / float(df['SMA20'].iloc[-5]) * 100, 3) if float(df['SMA20'].iloc[-5]) > 0 else 0
+
+                # ── Daily Liquidity check ─────────────────
+                # For daily chart: use real daily volume (not estimated)
+                # Grade based on avg daily turnover (₹ traded per day)
+                _dv20     = float(df['Volume'].tail(20).mean())  # 20-day avg volume
+                _turnover = _dv20 * close                         # ₹ turnover per day
+                _vol_cv   = float(df['Volume'].tail(20).std() / _dv20) if _dv20 > 0 else 1.0
+                _pos_days = (_dv20 * 0.05) / qty if qty > 0 and _dv20 > 0 else 999  # days to fill position at 5% ADV
+
+                if _turnover >= 500_000_000:     # ≥₹50Cr/day
+                    _liq_grade = 'EXCELLENT'
+                    _liq_clr   = '#15803d'
+                    _liq_bg    = '#dcfce7'
+                    _liq_ico   = '✅'
+                elif _turnover >= 100_000_000:   # ≥₹10Cr/day
+                    _liq_grade = 'HIGH'
+                    _liq_clr   = '#1d4ed8'
+                    _liq_bg    = '#dbeafe'
+                    _liq_ico   = '🔵'
+                elif _turnover >= 20_000_000:    # ≥₹2Cr/day
+                    _liq_grade = 'MEDIUM'
+                    _liq_clr   = '#d97706'
+                    _liq_bg    = '#fef3c7'
+                    _liq_ico   = '🟡'
+                else:
+                    _liq_grade = 'LOW'
+                    _liq_clr   = '#dc2626'
+                    _liq_bg    = '#fee2e2'
+                    _liq_ico   = '🔴'
+
+                # Format turnover for display
+                if _turnover >= 1_000_000_000:
+                    _liq_turn_str = f"₹{_turnover/1_000_000_000:.1f}K Cr/day"
+                elif _turnover >= 10_000_000:
+                    _liq_turn_str = f"₹{_turnover/10_000_000:.0f} Cr/day"
+                else:
+                    _liq_turn_str = f"₹{_turnover/100_000:.0f} L/day"
+
+                results.append({
+                    'symbol': sym_clean, 'score': score,
+                    'close': round(close,2), 'sma20': round(sma20,2), 'sma50': round(sma50,2),
+                    'atr': round(atr,2), 'atr_label': _atr_label,
+                    'atr7': round(_atr7,2), 'atr14': round(_daily_atr,2),
+                    'wk_atr': round(_wk_atr,2) if _wk_atr else None, 'rsi': round(rsi,1), 'vol_ratio': round(vol_ratio,1),
+                    'cross_age': cross_age, 'trend_days': trend_days,
+                    'signal_label': signal_label, 'signal_type': signal_type,
+                    'sma20_slope': round(_sma20_slope, 2),
+                    'hh': _hh, 'hl': _hl,
+                    'pct_above_sma50': round(pct_above_sma50, 1),
+                    'extended': _extended,
+                    'entry': round(entry,2), 'sl': sl,
+                    't1': t1, 't2': t2, 't3': t3, 'qty': qty, 'inv': inv,
+                    'risk_d': round(risk_d,2), 'rr_t1': rr_t1, 'rr_t2': rr_t2,
+                    'week_chg': wchg, 'cap_tier': get_cap_tier(sym_clean),
+                    'liq_grade': _liq_grade, 'liq_clr': _liq_clr,
+                    'liq_bg': _liq_bg, 'liq_ico': _liq_ico,
+                    'liq_turn': _liq_turn_str,
+                    'src': src_lbl, 'mode': signal_type,
+                })
+
+                if len(results) % 5 == 0:
+                    _stat_sw.markdown(
+                        f"<div style='font-size:12px;color:#1d4ed8;padding:4px 0'>"
+                        f"📈 {len(results)} signals found so far...</div>",
+                        unsafe_allow_html=True)
+
+            except Exception:
+                continue
+        _prog_sw.empty()
+        _stat_sw.empty()
+        # Sort by: score × R:R at T2 (higher score AND higher return potential first)
+        # Normalise: score out of 100, rr_t2 typically 1–5
+        # Combined rank = score × rr_t2 → rewards both quality and return
+        for r in results:
+            r['_rank_score'] = round(r['score'] * r.get('rr_t2', 1.0), 1)
+        results.sort(key=lambda x: x['_rank_score'], reverse=True)
+        return results
+
+    _sw_run = st.button(
+        "📈 Scan Now",
+        key="sw_run_scan", use_container_width=True, type="primary",
+        help="Scans daily chart for SMA20+SMA50 — fresh crosses AND pullback bounces")
+
+    if _sw_run:
+        # Clear yfinance disk cache to force fresh data
+        try:
+            import yfinance as _yf_clear
+            _yf_clear.set_tz_cache_location(None)
+        except Exception:
+            pass
+        try:
+            import shutil, pathlib
+            _yf_cache = pathlib.Path.home() / '.cache' / 'py-yfinance'
+            if _yf_cache.exists():
+                shutil.rmtree(_yf_cache, ignore_errors=True)
+        except Exception:
+            pass
+        with st.spinner(f"📈 Scanning {len(_sw_stocks)} stocks on daily chart..."):
+            _sw_results = scan_sma_weekly(
+                _sw_stocks, _sw_capital, _sw_risk_pct, _sw_min_score, '')
+        st.session_state['sw_results']   = _sw_results
+        st.session_state['sw_scan_time'] = ist_now().strftime('%d %b %Y %H:%M IST')
+        st.rerun()
+
+    # ── Show results ──────────────────────────────────────
+    _sw_results  = st.session_state.get('sw_results', [])
+    _sw_scantime = st.session_state.get('sw_scan_time', '')
+
+    if not _sw_results:
+        st.markdown("""
+        <div style='background:#1a2035;border-radius:16px;padding:32px;
+                    text-align:center;margin:20px 0'>
+            <div style='font-size:40px;margin-bottom:12px'>📈</div>
+            <div style='font-size:18px;font-weight:700;color:white;margin-bottom:8px'>
+                SMA Weekly Scanner Ready
+            </div>
+            <div style='font-size:13px;color:rgba(255,255,255,0.6)'>
+                Select universe · Set capital · Click Scan
+            </div>
+        </div>""", unsafe_allow_html=True)
+    else:
+        # ── Filter buttons ────────────────────────────
+        _n_all   = len(_sw_results)
+        _n_cross = len([r for r in _sw_results if r.get('signal_type') in ('cross','both')])
+        _n_pb    = len([r for r in _sw_results if r.get('signal_type') in ('pullback','both')])
+        _n_both  = len([r for r in _sw_results if r.get('signal_type') == 'both'])
+
+        _sw_filter = st.radio(
+            "Filter",
+            [f"📊 All ({_n_all})",
+             f"🔀 Fresh Cross ({_n_cross})",
+             f"📉 Pullback Bounce ({_n_pb})",
+             f"🔥 Both Signals ({_n_both})"],
+            horizontal=True, key="sw_filter",
+            help="Filter signals by type")
+
+        # Apply filter
+        if 'Fresh Cross' in _sw_filter:
+            _sw_filtered = [r for r in _sw_results if r.get('signal_type') in ('cross','both')]
+        elif 'Pullback Bounce' in _sw_filter:
+            _sw_filtered = [r for r in _sw_results if r.get('signal_type') in ('pullback','both')]
+        elif 'Both Signals' in _sw_filter:
+            _sw_filtered = [r for r in _sw_results if r.get('signal_type') == 'both']
+        else:
+            _sw_filtered = _sw_results
+
+        # Summary bar
+        st.markdown(
+            f"<div style='font-size:12px;color:#64748b;margin-bottom:12px'>"
+            f"📈 {len(_sw_filtered)} signals shown · Scanned {_sw_scantime}</div>",
+            unsafe_allow_html=True)
+
+        for _sw_r in _sw_filtered[:15]:
+            _sc      = _sw_r['score']
+            _sym     = _sw_r['symbol']
+            _close   = _sw_r['close']
+            _sma20   = _sw_r['sma20']
+            _sma50   = _sw_r['sma50']
+            _atr     = _sw_r['atr']
+            _rsi     = _sw_r['rsi']
+            _volx    = _sw_r['vol_ratio']
+            _cage    = _sw_r['cross_age']
+            _entry   = _sw_r['entry']
+            _sl      = _sw_r['sl']
+            _t1      = _sw_r['t1']
+            _t2      = _sw_r['t2']
+            _t3      = _sw_r['t3']
+            _qty     = _sw_r['qty']
+            _inv     = _sw_r['inv']
+            _rr1     = _sw_r['rr_t1']
+            _rr2     = _sw_r['rr_t2']
+            _wchg    = _sw_r['week_chg']
+            _cap     = _sw_r['cap_tier']
+            _rd      = _sw_r['risk_d']
+            _rk      = _sw_r.get('_rank_score', _sc)
+            _liq_grade = _sw_r.get('liq_grade', 'MEDIUM')
+            _liq_clr   = _sw_r.get('liq_clr',   '#d97706')
+            _liq_bg    = _sw_r.get('liq_bg',    '#fef3c7')
+            _liq_ico   = _sw_r.get('liq_ico',   '🟡')
+            _liq_turn  = _sw_r.get('liq_turn',  '')
+            _liq_border = _liq_clr + '44'
+
+            # Score colour
+            _sc_clr = '#15803d' if _sc >= 80 else ('#d97706' if _sc >= 65 else '#64748b')
+            _sc_bg  = '#dcfce7' if _sc >= 80 else ('#fef3c7' if _sc >= 65 else '#f1f5f9')
+
+            # Cross age label
+            _cage_lbl = _sw_r.get('signal_label', f"Signal age {_cage}d")
+            _cage_clr = '#15803d' if _cage <= 1 else '#d97706'
+
+            # Cap badge
+            _cap_ico, _cap_name, _cap_clr, _cap_bg = CAP_TIER_BADGE.get(
+                _cap, ('🟠','Smallcap','#c2410c','#fff7ed'))
+            _cap_border = _cap_clr + '44'
+            _sc_border  = _sc_clr + '33'
+
+            # Weekly change colour
+            _wchg_clr = '#15803d' if _wchg >= 0 else '#dc2626'
+
+            # ── Card wrapper open ──────────────────────
+            st.markdown(
+                f"<div style='background:#ffffff;border:1.5px solid {_sc_border};"
+                f"border-radius:16px;padding:18px 20px;margin-bottom:12px;'>",
+                unsafe_allow_html=True)
+
+            # ── Header ─────────────────────────────────
+            st.markdown(f"""
+            <div style='display:flex;justify-content:space-between;
+                        align-items:flex-start;flex-wrap:wrap;gap:8px;
+                        margin-bottom:14px'>
+                <div>
+                    <div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'>
+                        <span style='font-size:22px;font-weight:800;color:#1a2035'>{_sym}</span>
+                        <span style='background:{_sc_bg};color:{_sc_clr};font-size:11px;
+                                     font-weight:700;border-radius:6px;padding:3px 10px'>
+                            Score {_sc}/100 · Rank {_rk:.0f}
+                        </span>
+                        <span style='background:{_cap_bg};color:{_cap_clr};font-size:10px;
+                                     font-weight:700;border-radius:4px;padding:2px 8px;
+                                     border:1px solid {_cap_border}'>
+                            {_cap_ico} {_cap_name}
+                        </span>
+                        <span style='background:{_liq_bg};color:{_liq_clr};font-size:10px;
+                                     font-weight:700;border-radius:4px;padding:2px 8px;
+                                     border:1px solid {_liq_border}'>
+                            {_liq_ico} {_liq_grade} · {_liq_turn}
+                        </span>
+                    </div>
+                    <div style='font-size:12px;color:#64748b;margin-top:5px'>
+                        <span style='color:{_cage_clr};font-weight:700'>{_cage_lbl}</span>
+                        &nbsp;·&nbsp; RSI {_rsi}
+                        &nbsp;·&nbsp; Vol {_volx}×
+                        &nbsp;·&nbsp;
+                        <span style='color:{_wchg_clr}'>Week {_wchg:+.1f}%</span>
+                        &nbsp;·&nbsp;
+                        <span style='color:{"#15803d" if _sw_r.get("sma20_slope",0)>0 else "#dc2626"}'>
+                            SMA20 slope {_sw_r.get("sma20_slope",0):+.2f}%
+                        </span>
+                    </div>
+                </div>
+                <div style='text-align:right'>
+                    <div style='font-size:24px;font-weight:800;
+                                color:#1a2035;font-family:JetBrains Mono'>
+                        ₹{_close:,.2f}
+                    </div>
+                    <div style='font-size:11px;color:#64748b'>
+                        SMA20 ₹{_sma20:,.2f} · SMA50 ₹{_sma50:,.2f}
+                    </div>
+                </div>
+            </div>""", unsafe_allow_html=True)
+
+            # ── SMA bar ─────────────────────────────────
+            st.markdown(f"""
+            <div style='background:#f8fafc;border-radius:8px;padding:10px 14px;
+                        margin-bottom:12px;font-size:11px;color:#64748b'>
+                <div style='display:flex;justify-content:space-between;margin-bottom:4px'>
+                    <span>SMA50 ₹{_sma50:,.2f}</span>
+                    <span style='color:#d97706;font-weight:700'>SMA20 ₹{_sma20:,.2f}</span>
+                    <span style='color:#1a2035;font-weight:700'>Price ₹{_close:,.2f}</span>
+                </div>
+                <div style='background:#e2e8f0;border-radius:4px;height:6px;position:relative'>
+                    <div style='background:#d97706;height:6px;border-radius:4px;width:60%'></div>
+                    <div style='background:#1a2035;height:10px;width:3px;border-radius:2px;
+                                position:absolute;top:-2px;left:72%'></div>
+                </div>
+                <div style='font-size:10px;color:#94a3b8;margin-top:3px'>
+                    ATR = ₹{_atr:,.2f} ({_sw_r.get('atr_label','weekly')} ATR · daily ₹{_sw_r.get('atr14',_atr):,.2f}) · Risk/share = ₹{_rd:,.2f}
+                </div>
+            </div>""", unsafe_allow_html=True)
+
+            # ── Trend factors row ────────────────────────
+            _hh      = _sw_r.get('hh', False)
+            _hl      = _sw_r.get('hl', False)
+            _ext     = _sw_r.get('extended', False)
+            _sma50p  = _sw_r.get('pct_above_sma50', 0)
+            _sl_str  = _sw_r.get('sma20_slope', 0)
+            _sl_clr  = '#15803d' if _sl_str >= 0.5 else ('#d97706' if _sl_str > 0 else '#dc2626')
+            _sl_lbl  = 'Strong ↑' if _sl_str >= 1.0 else ('Rising ↑' if _sl_str >= 0.5 else 'Weak ↑')
+            st.markdown(f"""
+            <div style='background:#f8fafc;border-radius:8px;padding:8px 14px;
+                        margin-bottom:10px;display:flex;gap:16px;flex-wrap:wrap;
+                        font-size:11px'>
+                <span>📈 HH: <b style='color:{"#15803d" if _hh else "#dc2626"}'>{"✅ Yes" if _hh else "❌ No"}</b></span>
+                <span>📈 HL: <b style='color:{"#15803d" if _hl else "#dc2626"}'>{"✅ Yes" if _hl else "❌ No"}</b></span>
+                <span>📐 SMA20 slope: <b style='color:{_sl_clr}'>{_sl_lbl} {_sl_str:+.2f}%</b></span>
+                <span>📏 vs SMA50: <b style='color:{"#dc2626" if _ext else "#15803d"}'>{"⚠️ Extended" if _ext else "✅ Normal"} +{_sma50p:.1f}%</b></span>
+                <span>📅 Trend: <b style='color:#1d4ed8'>{_sw_r.get("trend_days",0)}d</b></span>
+            </div>""", unsafe_allow_html=True)
+
+            # ── Targets ─────────────────────────────────
+            _sl_pct  = round((_entry - _sl)  / _entry * 100, 2) if _entry > 0 else 0
+            _t1_pct  = round((_t1 - _entry)  / _entry * 100, 2) if _entry > 0 else 0
+            _t2_pct  = round((_t2 - _entry)  / _entry * 100, 2) if _entry > 0 else 0
+            _t3_pct  = round((_t3 - _entry)  / _entry * 100, 2) if _entry > 0 else 0
+            st.markdown(f"""
+            <div style='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px'>
+                <div style='background:#fee2e2;border-radius:10px;padding:10px 14px;
+                            flex:1;min-width:80px;text-align:center'>
+                    <div style='font-size:9px;font-weight:700;color:#dc2626;
+                                letter-spacing:1px'>STOP LOSS</div>
+                    <div style='font-size:17px;font-weight:800;color:#dc2626;
+                                font-family:JetBrains Mono;margin:3px 0'>₹{_sl:,.2f}</div>
+                    <div style='font-size:10px;color:#dc2626'>−{_sl_pct:.2f}% · below SMA20</div>
+                </div>
+                <div style='background:#eff6ff;border-radius:10px;padding:10px 14px;
+                            flex:1;min-width:80px;text-align:center'>
+                    <div style='font-size:9px;font-weight:700;color:#1d4ed8;
+                                letter-spacing:1px'>T1 — R:R {_rr1}:1</div>
+                    <div style='font-size:17px;font-weight:800;color:#1d4ed8;
+                                font-family:JetBrains Mono;margin:3px 0'>₹{_t1:,.2f}</div>
+                    <div style='font-size:10px;color:#1d4ed8'>+{_t1_pct:.2f}% · 0.5× wkly ATR · Book 50%</div>
+                </div>
+                <div style='background:#f5f3ff;border-radius:10px;padding:10px 14px;
+                            flex:1;min-width:80px;text-align:center'>
+                    <div style='font-size:9px;font-weight:700;color:#7c3aed;
+                                letter-spacing:1px'>T2 — R:R {_rr2}:1</div>
+                    <div style='font-size:17px;font-weight:800;color:#7c3aed;
+                                font-family:JetBrains Mono;margin:3px 0'>₹{_t2:,.2f}</div>
+                    <div style='font-size:10px;color:#7c3aed'>+{_t2_pct:.2f}% · 1.0× wkly ATR · Trail SL</div>
+                </div>
+                <div style='background:#f0fdf4;border-radius:10px;padding:10px 14px;
+                            flex:1;min-width:80px;text-align:center'>
+                    <div style='font-size:9px;font-weight:700;color:#15803d;
+                                letter-spacing:1px'>T3 — STRETCH</div>
+                    <div style='font-size:17px;font-weight:800;color:#15803d;
+                                font-family:JetBrains Mono;margin:3px 0'>₹{_t3:,.2f}</div>
+                    <div style='font-size:10px;color:#15803d'>+{_t3_pct:.2f}% · 1.5× wkly ATR · Let run</div>
+                </div>
+            </div>""", unsafe_allow_html=True)
+
+            # ── Position info + card close ───────────────
+            st.markdown(f"""
+            <div style='background:#f8fafc;border-radius:8px;padding:8px 14px;
+                        font-size:11px;color:#64748b;display:flex;gap:20px;flex-wrap:wrap'>
+                <span>📦 Qty: <b style='color:#1a2035'>{_qty} shares</b></span>
+                <span>💰 Investment: <b style='color:#1a2035'>₹{_inv:,.0f}</b></span>
+                <span>⚠️ Max Risk: <b style='color:#dc2626'>₹{int(_qty*_rd):,}</b></span>
+                <span>🎯 Capital: <b style='color:#1a2035'>₹{_sw_capital:,.0f}</b></span>
+                <span>📊 Risk: <b style='color:#1a2035'>{_sw_risk_pct}%</b></span>
+            </div>
+            </div>""", unsafe_allow_html=True)
+
+            # ── Paper Buy button ──────────────────────────
+            _sw_pb_key = f"sw_paper_buy_{_sym}_{_sw_r.get('cross_age',0)}"
+            if st.button(
+                f"✅ Paper Buy  {_sym}  ·  Entry ₹{_entry:,.2f}  ·  SL ₹{_sl:,.2f}  ·  T1 ₹{_t1:,.2f}  ·  Qty {_qty}",
+                key=_sw_pb_key,
+                use_container_width=True,
+                type="primary"
+            ):
+                _sw_port = load_portfolio()
+                _sw_already = any(
+                    p.get('symbol') == _sym and p.get('status') == 'OPEN'
+                    for p in _sw_port
+                )
+                if _sw_already:
+                    st.warning(f"⚠️ Already have open position in {_sym}")
+                else:
+                    _sw_port.append({
+                        'symbol':      _sym,
+                        'status':      'OPEN',
+                        'entry':       round(_entry, 2),
+                        'qty':         _qty,
+                        'stop_loss':   _sl,
+                        't1':          _t1,
+                        't2':          _t2,
+                        't3':          _t3,
+                        't4':          0,
+                        'investment':  _inv,
+                        'actual_cost': _inv,
+                        'timeframe':   'Daily — SMA Weekly',
+                        'date':        ist_now().strftime('%d %b %Y %H:%M'),
+                        'entry_time':  ist_now().strftime('%H:%M'),
+                        'nifty_state': st.session_state.get('nifty_market_state', 'UNKNOWN'),
+                        'vix_level':   st.session_state.get('nifty_context', {}).get('vix_level', 'UNKNOWN'),
+                        'score':       _sc,
+                        'verdict':     _cage_lbl,
+                        'sig_age':     _sw_r.get('cross_age', 0),
+                        'vol_ratio':   _volx,
+                        'source':      'sma_weekly',
+                        'exit_reason': '',
+                        'cap_tier':    _cap,
+                        'sma20':       _sma20,
+                        'sma50':       _sma50,
+                        'signal_type': _sw_r.get('signal_type', ''),
+                    })
+                    save_portfolio(_sw_port)
+                    st.session_state['paper_portfolio'] = _sw_port
+                    st.success(
+                        f"✅ Paper bought {_qty} × {_sym} @ ₹{_entry:,.2f} · "
+                        f"SL ₹{_sl:,.2f} · T1 ₹{_t1:,.2f} · "
+                        f"Hold 3–7 days · Source: SMA Weekly"
+                    )
+                    st.rerun()
+
+        # No more results
+        if len(_sw_filtered) == 0:
+            st.info("No signals match this filter. Try 'All' or lower the min score.")
+
+
+
+# ─────────────────────────────────────────────────────────────
+#  MONTHLY SWING SCANNER
+#  For working professionals — weekend-only monitoring
+#  Uses WEEKLY candles for signals and targets
+#  Hold 3-5 weeks (one calendar month)
+#  Check only on weekends — no intraday monitoring needed
+# ─────────────────────────────────────────────────────────────
+
+if _show_monthlyswing:
+
+    # ── Data source badge ──────────────────────────────
+    _ms_kite = get_kite_client() is not None
+    _ms_src  = 'Kite API' if _ms_kite else 'yfinance — Weekly candles'
+    _ms_sclr = '#16a34a' if _ms_kite else '#d97706'
+    _ms_sbg  = '#dcfce7' if _ms_kite else '#fef3c7'
+    _ms_sico = '🟢' if _ms_kite else '🟡'
+
+    st.markdown(f"""
+    <div class='topbar'>
+        <div>
+            <div class='topbar-title'>📅 Monthly Swing Scanner</div>
+            <div class='topbar-subtitle'>
+                Weekly chart · SMA20 + SMA50 · Hold 3–5 weeks ·
+                Weekend-only monitoring · 2–3 positions
+            </div>
+        </div>
+        <div style='display:flex;align-items:center'>
+            <div style='background:{_ms_sbg};border:1px solid {_ms_sclr}44;
+                        border-radius:8px;padding:5px 12px;text-align:center'>
+                <div style='font-size:10px;font-weight:700;color:{_ms_sclr};
+                            letter-spacing:1px'>DATA SOURCE</div>
+                <div style='font-size:12px;font-weight:700;color:{_ms_sclr};
+                            margin-top:2px'>{_ms_sico} {_ms_src}</div>
+            </div>
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+    # ── Strategy cards ─────────────────────────────────
+    st.markdown("""
+    <div style='display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap'>
+        <div style='flex:1;min-width:140px;background:#eff6ff;border-radius:10px;
+                    padding:12px 14px;border:1px solid #bfdbfe44'>
+            <div style='font-size:20px;margin-bottom:6px'>📅</div>
+            <div style='font-size:12px;font-weight:700;color:#1d4ed8'>Hold Duration</div>
+            <div style='font-size:11px;color:#1e40af;margin-top:3px'>
+                3–5 weeks per trade<br>
+                Check only on weekends<br>
+                Perfect for 9–5 professionals
+            </div>
+        </div>
+        <div style='flex:1;min-width:140px;background:#f0fdf4;border-radius:10px;
+                    padding:12px 14px;border:1px solid #bbf7d044'>
+            <div style='font-size:20px;margin-bottom:6px'>📊</div>
+            <div style='font-size:12px;font-weight:700;color:#15803d'>Timeframe</div>
+            <div style='font-size:11px;color:#166534;margin-top:3px'>
+                Weekly candles only<br>
+                1 candle = 1 trading week<br>
+                Filters out daily noise
+            </div>
+        </div>
+        <div style='flex:1;min-width:140px;background:#fff5f5;border-radius:10px;
+                    padding:12px 14px;border:1px solid #fecaca44'>
+            <div style='font-size:20px;margin-bottom:6px'>🎯</div>
+            <div style='font-size:12px;font-weight:700;color:#dc2626'>Targets</div>
+            <div style='font-size:11px;color:#991b1b;margin-top:3px'>
+                T1 = +1.0× wkly ATR (~8–12%)<br>
+                T2 = +2.0× wkly ATR (~15–20%)<br>
+                T3 = +3.0× wkly ATR (~20–30%)
+            </div>
+        </div>
+        <div style='flex:1;min-width:140px;background:#fffbeb;border-radius:10px;
+                    padding:12px 14px;border:1px solid #fde68a44'>
+            <div style='font-size:20px;margin-bottom:6px'>🛑</div>
+            <div style='font-size:12px;font-weight:700;color:#d97706'>Stop Loss</div>
+            <div style='font-size:11px;color:#92400e;margin-top:3px'>
+                2× weekly ATR below entry<br>
+                Or below weekly SMA20<br>
+                Check only on Friday close
+            </div>
+        </div>
+        <div style='flex:1;min-width:140px;background:#f5f3ff;border-radius:10px;
+                    padding:12px 14px;border:1px solid #ddd6fe44'>
+            <div style='font-size:20px;margin-bottom:6px'>⏰</div>
+            <div style='font-size:12px;font-weight:700;color:#7c3aed'>Weekend Workflow</div>
+            <div style='font-size:11px;color:#6d28d9;margin-top:3px'>
+                Saturday: Run scan (15 min)<br>
+                Sunday: Place limit orders<br>
+                Monday: Confirm entries only
+            </div>
+        </div>
+    </div>""", unsafe_allow_html=True)
+
+    # ── Controls ───────────────────────────────────────
+    _ms_c1, _ms_c2, _ms_c3 = st.columns([2, 1, 1])
+    with _ms_c1:
+        _ms_universe = st.radio(
+            "Universe",
+            ["🔵 Largecap (Nifty 50)",
+             "🟡 Midcap (Nifty Midcap 100)",
+             "🟠 Smallcap",
+             "📊 Nifty 500 (All)"],
+            horizontal=True, key="ms_universe",
+            help="Midcap recommended for monthly swing — best return potential")
+        _ms_stocks = (
+            LARGECAP_STOCKS if _ms_universe == "🔵 Largecap (Nifty 50)"       else
+            MIDCAP_STOCKS   if _ms_universe == "🟡 Midcap (Nifty Midcap 100)" else
+            SMALLCAP_STOCKS if _ms_universe == "🟠 Smallcap"                  else
+            POPULAR_STOCKS
+        )
+        st.markdown(
+            f"<div style='font-size:11px;color:#64748b;margin-top:-8px'>"
+            f"⚡ {len(_ms_stocks)} stocks · Weekly candles · SMA20 + SMA50</div>",
+            unsafe_allow_html=True)
+    with _ms_c2:
+        _ms_capital = st.number_input(
+            "Capital ₹", min_value=50000, max_value=5000000,
+            value=500000, step=50000, format="%d", key="ms_capital",
+            help="Capital per trade for monthly swing")
+    with _ms_c3:
+        _ms_risk = st.number_input(
+            "Risk %", min_value=0.5, max_value=5.0,
+            value=2.0, step=0.5, format="%.1f", key="ms_risk",
+            help="Max risk per trade — wider for monthly holds")
+
+    _ms_min_score = st.slider(
+        "Min signal score", min_value=50, max_value=90, value=65,
+        step=5, key="ms_min_score",
+        help="Higher = fewer but stronger signals")
+
+    # ── Scan function ──────────────────────────────────
+    def scan_monthly_swing(stocks, capital, risk_pct, min_score):
+        """
+        Weekly chart scanner for monthly swing trades.
+        Signals:
+          1. Weekly SMA20 crossed above SMA50 (last 3 weekly candles)
+          2. Weekly pullback to SMA20 and bouncing
+          3. 13-week (3-month) high breakout with volume
+        All based on weekly candles — no daily noise.
+        """
+        results  = []
+        total    = len(stocks)
+        _prog_ms = st.progress(0, text="📅 Scanning weekly charts...")
+        _stat_ms = st.empty()
+
+        for idx, symbol in enumerate(stocks):
+            pct       = int(((idx+1)/total)*100)
+            sym_clean = symbol.replace('.NS','')
+            _prog_ms.progress(pct, text=f"📅 {idx+1}/{total} · {sym_clean}")
+
+            try:
+                _ticker_sym = symbol if symbol.endswith('.NS') else symbol+'.NS'
+                _t = yf.Ticker(_ticker_sym)
+
+                # ── Fetch weekly candles ──────────────────
+                df = _t.history(
+                    period='2y', interval='1wk',
+                    auto_adjust=True, actions=False)
+                if df is None or len(df) < 30:
+                    continue
+                df.columns = [c.split(' ')[0] if ' ' in str(c) else c
+                              for c in df.columns]
+                df = df[['Open','High','Low','Close','Volume']].dropna()
+                if len(df) < 28:
+                    continue
+
+                # ── Weekly indicators ─────────────────────
+                df['SMA20'] = df['Close'].rolling(20).mean()
+                df['SMA50'] = df['Close'].rolling(50).mean()
+                df['HL']    = df['High'] - df['Low']
+                df['HPC']   = (df['High'] - df['Close'].shift(1)).abs()
+                df['LPC']   = (df['Low']  - df['Close'].shift(1)).abs()
+                df['TR']    = df[['HL','HPC','LPC']].max(axis=1)
+                df['ATR7']  = df['TR'].rolling(7).mean()
+                df['VOLMA'] = df['Volume'].rolling(10).mean()
+                df['RSI14'] = 100 - (100/(1+(
+                    df['Close'].diff().clip(lower=0).rolling(14).mean()/
+                    (-df['Close'].diff().clip(upper=0)).rolling(14).mean()
+                )))
+
+                l=df.iloc[-1]; p=df.iloc[-2]; p2=df.iloc[-3]; p3=df.iloc[-4]
+
+                close   = float(l['Close'])
+                sma20   = float(l['SMA20'])
+                sma50   = float(l['SMA50'])
+                sma20_p = float(p['SMA20'])
+                sma50_p = float(p['SMA50'])
+                atr7    = float(l['ATR7'])
+                vol     = float(l['Volume'])
+                vol_ma  = float(l['VOLMA'])
+                rsi     = float(l['RSI14'])
+
+                if any(pd.isna(x) for x in [sma20,sma50,atr7,vol_ma]) or atr7<=0:
+                    continue
+
+                vol_ratio   = vol/vol_ma if vol_ma>0 else 1.0
+                pct_above20 = (close-sma20)/sma20*100 if sma20>0 else 0
+                pct_above50 = (close-sma50)/sma50*100 if sma50>0 else 0
+
+                # ── SMA20 slope (weekly) ──────────────────
+                sma20_4w    = float(df['SMA20'].iloc[-4]) if len(df)>=4 else sma20
+                sma50_4w    = float(df['SMA50'].iloc[-4]) if len(df)>=4 else sma50
+                sma20_slope = (sma20-sma20_4w)/sma20_4w*100 if sma20_4w>0 else 0
+                sma50_slope = (sma50-sma50_4w)/sma50_4w*100 if sma50_4w>0 else 0
+
+                # ── HARD GATES ────────────────────────────
+                if sma20 <= sma50:          continue  # no uptrend
+                if sma20_slope <= 0:        continue  # SMA20 declining
+                if sma50_slope < -0.5:      continue  # base declining
+                if close <= sma20:          continue  # price below SMA20
+
+                # ── SIGNAL 1: Weekly SMA Cross ────────────
+                cross_w0 = sma20>sma50 and sma20_p<=float(p['SMA50'])
+                cross_w1 = float(p['SMA20'])>float(p['SMA50']) and float(p2['SMA20'])<=float(p2['SMA50'])
+                cross_w2 = float(p2['SMA20'])>float(p2['SMA50']) and float(p3['SMA20'])<=float(p3['SMA50'])
+                has_cross = cross_w0 or cross_w1 or cross_w2
+                cross_age = 0 if cross_w0 else (1 if cross_w1 else 2)
+
+                # ── SIGNAL 2: Weekly Pullback Bounce ─────
+                # Uptrend established ≥ 4 weekly candles
+                trend_weeks = 0
+                for i in range(1, min(20, len(df))):
+                    if float(df['SMA20'].iloc[-i])>float(df['SMA50'].iloc[-i]):
+                        trend_weeks += 1
+                    else:
+                        break
+
+                pb_found = False; pb_age = 0
+                if trend_weeks >= 4:
+                    for i in range(1, 4):  # last 3 weekly candles
+                        row_low = float(df['Low'].iloc[-i])
+                        row_sma = float(df['SMA20'].iloc[-i])
+                        if abs(row_low-row_sma)/row_sma*100<=2.0 or row_low<=row_sma:
+                            pb_found = True; pb_age = i; break
+
+                has_pb = pb_found and close>=sma20*1.002 and pct_above20<=8
+
+                # ── SIGNAL 3: 13-Week High Breakout ──────
+                high_13w    = float(df['High'].iloc[-13:-1].max()) if len(df)>=14 else 0
+                is_breakout = close > high_13w * 0.99 if high_13w > 0 else False
+                # Volume must expand on breakout
+                breakout_vol= vol_ratio >= 1.5
+
+                if not has_cross and not has_pb and not is_breakout:
+                    continue
+
+                # Signal label
+                signals = []
+                if has_cross:   signals.append(f"🔀 Weekly cross {cross_age}wk ago")
+                if has_pb:      signals.append(f"📉 Wkly pullback {pb_age}wk ago")
+                if is_breakout: signals.append(f"🚀 13-week high breakout")
+                signal_label = " + ".join(signals)
+                signal_count = len(signals)
+
+                # ── Higher Highs / Lows (monthly) ────────
+                # Each period = 4 weekly candles = 1 month
+                m1h = float(df['High'].iloc[-4:].max())
+                m2h = float(df['High'].iloc[-8:-4].max())
+                m3h = float(df['High'].iloc[-12:-8].max())
+                m1l = float(df['Low'].iloc[-4:].min())
+                m2l = float(df['Low'].iloc[-8:-4].min())
+                m3l = float(df['Low'].iloc[-12:-8].min())
+                hh  = m1h > m2h > m3h
+                hl  = m1l > m2l > m3l
+
+                extended = pct_above50 > 20
+
+                # ── SCORING ───────────────────────────────
+                score = 0
+
+                # Signal bonus (max 30)
+                if signal_count >= 3:       score += 30
+                elif signal_count == 2:     score += 25
+                else:
+                    if has_cross:
+                        score += 25 if cross_age==0 else (18 if cross_age==1 else 12)
+                    elif has_pb:
+                        score += 22 if pb_age==1 else (16 if pb_age==2 else 10)
+                    elif is_breakout and breakout_vol:
+                        score += 20
+                    elif is_breakout:
+                        score += 12
+
+                # Price vs weekly SMA20 (max 20)
+                score += (20 if pct_above20<=1 else 15 if pct_above20<=3 else
+                          10 if pct_above20<=5 else 5 if pct_above20<=8 else 0)
+
+                # Trend weeks (max 10)
+                score += (10 if trend_weeks>=12 else 7 if trend_weeks>=8 else
+                          4 if trend_weeks>=4 else 0)
+
+                # Weekly RSI (max 15)
+                score += (15 if 45<=rsi<=65 else
+                          8 if 40<=rsi<45 or 65<rsi<=70 else 0)
+
+                # Weekly volume (max 15)
+                score += (15 if vol_ratio>=2.0 else 10 if vol_ratio>=1.5 else
+                          5 if vol_ratio>=1.0 else 0)
+
+                # SMA20 weekly slope (max 10)
+                score += (10 if sma20_slope>=1.0 else 7 if sma20_slope>=0.5 else
+                          4 if sma20_slope>=0.2 else 1)
+
+                # Monthly HH + HL (max 10)
+                if hh and hl:   score += 10
+                elif hh:        score += 6
+                elif hl:        score += 4
+
+                # Gap widening (max 10)
+                gap_now  = (sma20-sma50)/sma50*100 if sma50>0 else 0
+                gap_prev = (sma20_p-sma50_p)/sma50_p*100 if sma50_p>0 else 0
+                if gap_now > gap_prev: score += 10
+
+                # Extended penalty
+                if pct_above50 > 20:   score -= 15
+                elif pct_above50 > 15: score -= 5
+
+                if score < min_score:
+                    continue
+
+                # ── Trade plan ────────────────────────────
+                entry  = close
+                # SL = wider for monthly hold
+                # 2× weekly ATR OR below weekly SMA20 × 0.97
+                sl_atr  = round(entry - 2.0*atr7, 2)
+                sl_sma  = round(sma20 * 0.97, 2)
+                sl      = max(sl_atr, sl_sma)  # less aggressive = higher value
+                risk_d  = entry - sl
+                if risk_d <= 0: continue
+
+                t1 = round(entry + 1.0*atr7, 2)
+                t2 = round(entry + 2.0*atr7, 2)
+                t3 = round(entry + 3.0*atr7, 2)
+
+                qty    = max(1, int((capital*risk_pct/100)/risk_d))
+                inv    = round(entry*qty, 2)
+                rr_t1  = round((t1-entry)/risk_d, 1)
+                rr_t2  = round((t2-entry)/risk_d, 1)
+                rr_t3  = round((t3-entry)/risk_d, 1)
+
+                # Monthly change (4 weeks)
+                mchg = round((close-float(df.iloc[-5]['Close']))/float(df.iloc[-5]['Close'])*100,2) if len(df)>=5 else 0
+
+                # Daily liquidity
+                _dv  = vol_ma * close
+                if _dv >= 500_000_000:   _lg='EXCELLENT'; _lc='#15803d'; _lb='#dcfce7'; _li='✅'
+                elif _dv >= 100_000_000: _lg='HIGH';      _lc='#1d4ed8'; _lb='#dbeafe'; _li='🔵'
+                elif _dv >= 20_000_000:  _lg='MEDIUM';    _lc='#d97706'; _lb='#fef3c7'; _li='🟡'
+                else:                    _lg='LOW';        _lc='#dc2626'; _lb='#fee2e2'; _li='🔴'
+                if _dv>=1_000_000_000:   _lt=f"₹{_dv/1_000_000_000:.1f}K Cr/wk"
+                elif _dv>=10_000_000:    _lt=f"₹{_dv/10_000_000:.0f} Cr/wk"
+                else:                    _lt=f"₹{_dv/100_000:.0f} L/wk"
+
+                _rank = round(score * rr_t2, 1)
+                cap_tier = get_cap_tier(sym_clean)
+
+                results.append({
+                    'symbol':        sym_clean,
+                    'score':         score,
+                    '_rank':         _rank,
+                    'close':         round(close,2),
+                    'sma20':         round(sma20,2),
+                    'sma50':         round(sma50,2),
+                    'atr7':          round(atr7,2),
+                    'rsi':           round(rsi,1),
+                    'vol_ratio':     round(vol_ratio,1),
+                    'trend_weeks':   trend_weeks,
+                    'signal_label':  signal_label,
+                    'signal_count':  signal_count,
+                    'has_cross':     has_cross,
+                    'has_pb':        has_pb,
+                    'is_breakout':   is_breakout,
+                    'cross_age':     cross_age if has_cross else 99,
+                    'pb_age':        pb_age,
+                    'hh':            hh, 'hl': hl,
+                    'sma20_slope':   round(sma20_slope,2),
+                    'pct_above20':   round(pct_above20,1),
+                    'pct_above50':   round(pct_above50,1),
+                    'month_chg':     mchg,
+                    'entry':         round(entry,2),
+                    'sl':            sl,
+                    't1':            t1, 't2': t2, 't3': t3,
+                    'qty':           qty, 'inv': inv,
+                    'risk_d':        round(risk_d,2),
+                    'rr_t1':         rr_t1, 'rr_t2': rr_t2, 'rr_t3': rr_t3,
+                    'liq_grade':     _lg, 'liq_clr': _lc, 'liq_bg': _lb,
+                    'liq_ico':       _li, 'liq_turn': _lt,
+                    'cap_tier':      cap_tier,
+                })
+
+                if len(results) % 3 == 0:
+                    _stat_ms.markdown(
+                        f"<div style='font-size:12px;color:#7c3aed;padding:4px 0'>"
+                        f"📅 {len(results)} monthly swing signals found...</div>",
+                        unsafe_allow_html=True)
+
+            except Exception:
+                continue
+
+        _prog_ms.empty(); _stat_ms.empty()
+        results.sort(key=lambda x: x['_rank'], reverse=True)
+        return results
+
+    # ── Scan button ────────────────────────────────────
+    _ms_run = st.button(
+        "📅 Scan for Monthly Swing Trades",
+        key="ms_run_scan", use_container_width=True, type="primary",
+        help="Scans weekly charts — best run on weekends after market close")
+
+    if _ms_run:
+        # Clear yfinance disk cache
+        try:
+            import shutil, pathlib
+            _yfc = pathlib.Path.home()/'.cache'/'py-yfinance'
+            if _yfc.exists(): shutil.rmtree(_yfc, ignore_errors=True)
+        except Exception:
+            pass
+        with st.spinner(f"📅 Scanning {len(_ms_stocks)} weekly charts..."):
+            _ms_results = scan_monthly_swing(
+                _ms_stocks, _ms_capital, _ms_risk, _ms_min_score)
+        st.session_state['ms_results']   = _ms_results
+        st.session_state['ms_scan_time'] = ist_now().strftime('%d %b %Y %H:%M IST')
+        st.rerun()
+
+    # ── Results ────────────────────────────────────────
+    _ms_results  = st.session_state.get('ms_results', [])
+    _ms_scantime = st.session_state.get('ms_scan_time', '')
+
+    if not _ms_results:
+        st.markdown("""
+        <div style='background:#1a2035;border-radius:16px;padding:36px;
+                    text-align:center;margin:20px 0'>
+            <div style='font-size:44px;margin-bottom:12px'>📅</div>
+            <div style='font-size:18px;font-weight:700;color:white;margin-bottom:8px'>
+                Monthly Swing Scanner Ready
+            </div>
+            <div style='font-size:13px;color:rgba(255,255,255,0.6);line-height:1.8'>
+                Best run on Saturday or Sunday evening<br>
+                Scans weekly charts · Finds 3–5 week swing opportunities<br>
+                No intraday monitoring needed
+            </div>
+        </div>""", unsafe_allow_html=True)
+    else:
+        # Filter buttons
+        _n_all = len(_ms_results)
+        _n_cross = len([r for r in _ms_results if r.get('has_cross')])
+        _n_pb    = len([r for r in _ms_results if r.get('has_pb')])
+        _n_brkout= len([r for r in _ms_results if r.get('is_breakout')])
+
+        _ms_filter = st.radio(
+            "Filter",
+            [f"📊 All ({_n_all})",
+             f"🔀 Weekly Cross ({_n_cross})",
+             f"📉 Weekly Pullback ({_n_pb})",
+             f"🚀 13-Week Breakout ({_n_brkout})"],
+            horizontal=True, key="ms_filter")
+
+        if 'Weekly Cross' in _ms_filter:
+            _ms_show = [r for r in _ms_results if r.get('has_cross')]
+        elif 'Weekly Pullback' in _ms_filter:
+            _ms_show = [r for r in _ms_results if r.get('has_pb')]
+        elif '13-Week Breakout' in _ms_filter:
+            _ms_show = [r for r in _ms_results if r.get('is_breakout')]
+        else:
+            _ms_show = _ms_results
+
+        st.markdown(
+            f"<div style='font-size:12px;color:#64748b;margin-bottom:12px'>"
+            f"📅 {len(_ms_show)} signals · Scanned {_ms_scantime} · "
+            f"Sorted by Score × R:R</div>",
+            unsafe_allow_html=True)
+
+        for _ms_r in _ms_show[:10]:
+            _sc   = _ms_r['score']
+            _sym  = _ms_r['symbol']
+            _rk   = _ms_r['_rank']
+            _close= _ms_r['close']
+            _s20  = _ms_r['sma20']
+            _s50  = _ms_r['sma50']
+            _atr  = _ms_r['atr7']
+            _rsi  = _ms_r['rsi']
+            _volx = _ms_r['vol_ratio']
+            _tw   = _ms_r['trend_weeks']
+            _slab = _ms_r['signal_label']
+            _entry= _ms_r['entry']
+            _sl   = _ms_r['sl']
+            _t1   = _ms_r['t1']
+            _t2   = _ms_r['t2']
+            _t3   = _ms_r['t3']
+            _qty  = _ms_r['qty']
+            _inv  = _ms_r['inv']
+            _rd   = _ms_r['risk_d']
+            _rr1  = _ms_r['rr_t1']
+            _rr2  = _ms_r['rr_t2']
+            _rr3  = _ms_r['rr_t3']
+            _mchg = _ms_r['month_chg']
+            _cap  = _ms_r['cap_tier']
+            _sl_str = _ms_r['sma20_slope']
+            _p20  = _ms_r['pct_above20']
+            _p50  = _ms_r['pct_above50']
+            _hh   = _ms_r['hh']
+            _hl   = _ms_r['hl']
+            _lg   = _ms_r['liq_grade']
+            _lc   = _ms_r['liq_clr']
+            _lb   = _ms_r['liq_bg']
+            _li   = _ms_r['liq_ico']
+            _lt   = _ms_r['liq_turn']
+
+            # Colours
+            _sc_clr = '#15803d' if _sc>=80 else ('#1d4ed8' if _sc>=70 else '#d97706')
+            _sc_bg  = '#dcfce7' if _sc>=80 else ('#dbeafe' if _sc>=70 else '#fef3c7')
+            _sc_bdr = _sc_clr+'33'
+            _cap_ico,_cap_name,_cap_clr,_cap_bg = CAP_TIER_BADGE.get(
+                _cap, ('🟠','Smallcap','#c2410c','#fff7ed'))
+            _cap_bdr = _cap_clr+'44'
+            _liq_bdr = _lc+'44'
+            _mchg_clr= '#15803d' if _mchg>=0 else '#dc2626'
+            _sl_clr2 = '#15803d' if _sl_str>=0.5 else ('#d97706' if _sl_str>0 else '#dc2626')
+            _sl_lbl  = 'Strong ↑' if _sl_str>=1.0 else ('Rising ↑' if _sl_str>=0.5 else 'Weak ↑')
+
+            # % changes
+            _sl_pct = round((_entry-_sl)/_entry*100,2) if _entry>0 else 0
+            _t1_pct = round((_t1-_entry)/_entry*100,2) if _entry>0 else 0
+            _t2_pct = round((_t2-_entry)/_entry*100,2) if _entry>0 else 0
+            _t3_pct = round((_t3-_entry)/_entry*100,2) if _entry>0 else 0
+
+            # ── Card open + header ────────────────────
+            st.markdown(
+                f"<div style='background:#ffffff;border:1.5px solid {_sc_bdr};"
+                f"border-radius:16px;padding:18px 20px;margin-bottom:14px;'>",
+                unsafe_allow_html=True)
+
+            st.markdown(f"""
+            <div style='display:flex;justify-content:space-between;
+                        align-items:flex-start;flex-wrap:wrap;gap:8px;
+                        margin-bottom:12px'>
+                <div>
+                    <div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'>
+                        <span style='font-size:22px;font-weight:800;color:#1a2035'>
+                            {_sym}
+                        </span>
+                        <span style='background:{_sc_bg};color:{_sc_clr};
+                                     font-size:11px;font-weight:700;
+                                     border-radius:6px;padding:3px 10px'>
+                            Score {_sc}/100 · Rank {_rk:.0f}
+                        </span>
+                        <span style='background:{_cap_bg};color:{_cap_clr};
+                                     font-size:10px;font-weight:700;
+                                     border-radius:4px;padding:2px 8px;
+                                     border:1px solid {_cap_bdr}'>
+                            {_cap_ico} {_cap_name}
+                        </span>
+                        <span style='background:{_lb};color:{_lc};
+                                     font-size:10px;font-weight:700;
+                                     border-radius:4px;padding:2px 8px;
+                                     border:1px solid {_liq_bdr}'>
+                            {_li} {_lg} · {_lt}
+                        </span>
+                    </div>
+                    <div style='font-size:12px;color:#64748b;margin-top:6px'>
+                        <span style='color:#7c3aed;font-weight:700'>{_slab}</span>
+                        &nbsp;·&nbsp; RSI {_rsi}
+                        &nbsp;·&nbsp; Vol {_volx}×
+                        &nbsp;·&nbsp; Trend {_tw}wk
+                        &nbsp;·&nbsp;
+                        <span style='color:{_mchg_clr}'>Month {_mchg:+.1f}%</span>
+                    </div>
+                </div>
+                <div style='text-align:right'>
+                    <div style='font-size:26px;font-weight:800;
+                                color:#1a2035;font-family:JetBrains Mono'>
+                        ₹{_close:,.2f}
+                    </div>
+                    <div style='font-size:11px;color:#64748b'>
+                        SMA20 ₹{_s20:,.2f} · SMA50 ₹{_s50:,.2f}
+                    </div>
+                </div>
+            </div>""", unsafe_allow_html=True)
+
+            # ── Trend quality row ─────────────────────
+            st.markdown(f"""
+            <div style='background:#f8fafc;border-radius:8px;padding:8px 14px;
+                        margin-bottom:10px;display:flex;gap:16px;flex-wrap:wrap;
+                        font-size:11px'>
+                <span>📈 HH: <b style='color:{"#15803d" if _hh else "#dc2626"}'>
+                    {"✅ Yes" if _hh else "❌ No"}</b></span>
+                <span>📈 HL: <b style='color:{"#15803d" if _hl else "#dc2626"}'>
+                    {"✅ Yes" if _hl else "❌ No"}</b></span>
+                <span>📐 Slope: <b style='color:{_sl_clr2}'>{_sl_lbl} {_sl_str:+.2f}%</b></span>
+                <span>📏 vs SMA50: <b style='color:{"#dc2626" if _p50>20 else "#15803d"}'>
+                    {"⚠️ Extended" if _p50>20 else "✅ Normal"} +{_p50:.1f}%</b></span>
+                <span>📊 vs SMA20: <b style='color:{"#15803d" if _p20<=3 else "#d97706"}'>
+                    +{_p20:.1f}%</b></span>
+                <span>⏳ Trend: <b style='color:#7c3aed'>{_tw}wk</b></span>
+                <span>📉 Wkly ATR: <b style='color:#1a2035'>₹{_atr:,.2f}</b></span>
+            </div>""", unsafe_allow_html=True)
+
+            # ── Targets ───────────────────────────────
+            st.markdown(f"""
+            <div style='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px'>
+                <div style='background:#fee2e2;border-radius:10px;padding:10px 14px;
+                            flex:1;min-width:80px;text-align:center'>
+                    <div style='font-size:9px;font-weight:700;color:#dc2626;
+                                letter-spacing:1px'>STOP LOSS</div>
+                    <div style='font-size:17px;font-weight:800;color:#dc2626;
+                                font-family:JetBrains Mono;margin:3px 0'>
+                        ₹{_sl:,.2f}</div>
+                    <div style='font-size:10px;color:#dc2626'>
+                        −{_sl_pct:.1f}% · 2× wkly ATR</div>
+                </div>
+                <div style='background:#eff6ff;border-radius:10px;padding:10px 14px;
+                            flex:1;min-width:80px;text-align:center'>
+                    <div style='font-size:9px;font-weight:700;color:#1d4ed8;
+                                letter-spacing:1px'>T1 — R:R {_rr1}:1</div>
+                    <div style='font-size:17px;font-weight:800;color:#1d4ed8;
+                                font-family:JetBrains Mono;margin:3px 0'>
+                        ₹{_t1:,.2f}</div>
+                    <div style='font-size:10px;color:#1d4ed8'>
+                        +{_t1_pct:.1f}% · 1× ATR · Exit 40%</div>
+                </div>
+                <div style='background:#f5f3ff;border-radius:10px;padding:10px 14px;
+                            flex:1;min-width:80px;text-align:center'>
+                    <div style='font-size:9px;font-weight:700;color:#7c3aed;
+                                letter-spacing:1px'>T2 — R:R {_rr2}:1</div>
+                    <div style='font-size:17px;font-weight:800;color:#7c3aed;
+                                font-family:JetBrains Mono;margin:3px 0'>
+                        ₹{_t2:,.2f}</div>
+                    <div style='font-size:10px;color:#7c3aed'>
+                        +{_t2_pct:.1f}% · 2× ATR · Exit 40%</div>
+                </div>
+                <div style='background:#f0fdf4;border-radius:10px;padding:10px 14px;
+                            flex:1;min-width:80px;text-align:center'>
+                    <div style='font-size:9px;font-weight:700;color:#15803d;
+                                letter-spacing:1px'>T3 — R:R {_rr3}:1</div>
+                    <div style='font-size:17px;font-weight:800;color:#15803d;
+                                font-family:JetBrains Mono;margin:3px 0'>
+                        ₹{_t3:,.2f}</div>
+                    <div style='font-size:10px;color:#15803d'>
+                        +{_t3_pct:.1f}% · 3× ATR · Trail 20%</div>
+                </div>
+            </div>""", unsafe_allow_html=True)
+
+            # ── Position info ─────────────────────────
+            st.markdown(f"""
+            <div style='background:#f8fafc;border-radius:8px;padding:8px 14px;
+                        font-size:11px;color:#64748b;
+                        display:flex;gap:20px;flex-wrap:wrap;margin-bottom:4px'>
+                <span>📦 Qty: <b style='color:#1a2035'>{_qty} shares</b></span>
+                <span>💰 Investment: <b style='color:#1a2035'>₹{_inv:,.0f}</b></span>
+                <span>⚠️ Max Risk: <b style='color:#dc2626'>₹{int(_qty*_rd):,}</b></span>
+                <span>🎯 Capital: <b style='color:#1a2035'>₹{_ms_capital:,.0f}</b></span>
+                <span>📊 Risk: <b style='color:#1a2035'>{_ms_risk}%</b></span>
+                <span>⏳ Hold: <b style='color:#7c3aed'>3–5 weeks</b></span>
+            </div>
+            </div>""", unsafe_allow_html=True)
+
+            # ── Paper Buy button ──────────────────────
+            _ms_pb_key = f"ms_paper_{_sym}_{_sc}"
+            if st.button(
+                f"✅ Paper Buy  {_sym}  ·  ₹{_entry:,.2f}  ·  SL ₹{_sl:,.2f}  ·  T1 ₹{_t1:,.2f}  ·  T2 ₹{_t2:,.2f}  ·  Qty {_qty}",
+                key=_ms_pb_key, use_container_width=True, type="primary"
+            ):
+                _ms_port = load_portfolio()
+                _ms_dup  = any(p.get('symbol')==_sym and p.get('status')=='OPEN'
+                               for p in _ms_port)
+                if _ms_dup:
+                    st.warning(f"⚠️ Already have open position in {_sym}")
+                else:
+                    _ms_port.append({
+                        'symbol':      _sym,
+                        'status':      'OPEN',
+                        'entry':       round(_entry,2),
+                        'qty':         _qty,
+                        'stop_loss':   _sl,
+                        't1':          _t1,
+                        't2':          _t2,
+                        't3':          _t3,
+                        't4':          0,
+                        'investment':  _inv,
+                        'actual_cost': _inv,
+                        'timeframe':   'Weekly — Monthly Swing',
+                        'date':        ist_now().strftime('%d %b %Y %H:%M'),
+                        'entry_time':  ist_now().strftime('%H:%M'),
+                        'nifty_state': st.session_state.get('nifty_market_state','UNKNOWN'),
+                        'vix_level':   st.session_state.get('nifty_context',{}).get('vix_level','UNKNOWN'),
+                        'score':       _sc,
+                        'verdict':     _slab,
+                        'sig_age':     _ms_r.get('pb_age',0),
+                        'vol_ratio':   _volx,
+                        'source':      'monthly_swing',
+                        'exit_reason': '',
+                        'cap_tier':    _cap,
+                        'sma20':       _s20,
+                        'sma50':       _s50,
+                        'signal_type': _ms_r.get('signal_label',''),
+                    })
+                    save_portfolio(_ms_port)
+                    st.session_state['paper_portfolio'] = _ms_port
+                    st.success(
+                        f"✅ Paper bought {_qty} × {_sym} @ ₹{_entry:,.2f} · "
+                        f"SL ₹{_sl:,.2f} · T1 ₹{_t1:,.2f} · "
+                        f"Hold 3–5 weeks · Source: Monthly Swing"
+                    )
+                    st.rerun()
+
+        if len(_ms_show) == 0:
+            st.info("No signals match this filter. Try 'All' or lower the min score.")
