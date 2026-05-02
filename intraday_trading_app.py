@@ -9415,6 +9415,13 @@ if _show_monthlyswing:
     _ms_sbg  = '#dcfce7' if _ms_kite else '#fef3c7'
     _ms_sico = '🟢' if _ms_kite else '🟡'
 
+    # Nifty weekly status (cached from last scan)
+    _ms_nifty_status = st.session_state.get('ms_nifty_bullish', None)
+    _ms_nifty_lbl    = ('🟢 Nifty Weekly Bullish' if _ms_nifty_status == True
+                        else '🔴 Nifty Weekly Bearish' if _ms_nifty_status == False
+                        else '⚪ Nifty — Run scan')
+    _ms_sico = '🟢' if _ms_kite else '🟡'
+
     st.markdown(f"""
     <div class='topbar'>
         <div>
@@ -9530,20 +9537,119 @@ if _show_monthlyswing:
     # ── Scan function ──────────────────────────────────
     def scan_monthly_swing(stocks, capital, risk_pct, min_score):
         """
-        Weekly chart scanner for monthly swing trades.
-        Signals:
-          1. Weekly SMA20 crossed above SMA50 (last 3 weekly candles)
-          2. Weekly pullback to SMA20 and bouncing
-          3. 13-week (3-month) high breakout with volume
-        All based on weekly candles — no daily noise.
+        Monthly swing scanner — weekly candles.
+        8 additional checks: Nifty alignment, RS, OBV, Sector,
+        52W high, Earnings warning, MACD, Inside week.
         """
         results  = []
         total    = len(stocks)
-        _prog_ms = st.progress(0, text="📅 Scanning weekly charts...")
+        _prog_ms = st.progress(0, text="📅 Initialising — fetching Nifty + sector data...")
         _stat_ms = st.empty()
 
+        # ══════════════════════════════════════════════════
+        # PHASE 1 — Pre-scan: Nifty + Sector data (once)
+        # ══════════════════════════════════════════════════
+
+        # ── Nifty weekly alignment ────────────────────────
+        _nifty_bullish = True
+        _nifty_sma20   = None
+        _nifty_sma50   = None
+        _nifty_closes  = {}   # {weeks_ago: close}
+        try:
+            _nt = yf.Ticker('^NSEI')
+            _nf = _nt.history(period='2y', interval='1wk', auto_adjust=True, actions=False)
+            _nf.columns = [c.split(' ')[0] if ' ' in str(c) else c for c in _nf.columns]
+            _nf = _nf[['Close']].dropna()
+            _nf['SMA20'] = _nf['Close'].rolling(20).mean()
+            _nf['SMA50'] = _nf['Close'].rolling(50).mean()
+            _nifty_sma20 = float(_nf['SMA20'].iloc[-1])
+            _nifty_sma50 = float(_nf['SMA50'].iloc[-1])
+            _nifty_bullish = _nifty_sma20 > _nifty_sma50
+            _nifty_closes  = {
+                0: float(_nf['Close'].iloc[-1]),
+                4: float(_nf['Close'].iloc[-4]) if len(_nf)>=4 else float(_nf['Close'].iloc[-1]),
+            }
+        except Exception:
+            _nifty_bullish = True  # assume bullish if fetch fails
+
+        # Nifty weekly bearish → show WARNING only, continue scan
+        # Don't stop — some stocks outperform even in weak Nifty
+        # But apply score penalty and show caution badge on results
+        try:
+            st.session_state['_ms_nifty_temp'] = _nifty_bullish
+        except Exception:
+            pass
+        if not _nifty_bullish and _nifty_sma20 and _nifty_sma50:
+            st.warning(
+                f"⚠️ Nifty Weekly is BEARISH — SMA20 ₹{_nifty_sma20:,.0f} < SMA50 ₹{_nifty_sma50:,.0f}  "
+                f"Only stocks with strong RS vs Nifty will appear. Use smaller position size.")
+
+        # ── Sector ETF map ────────────────────────────────
+        SECTOR_ETF = {
+            'BANK':    '^NSEBANK',   'FINANCE':  '^NSEBANK',
+            'IT':      '^CNXIT',      'TECH':     '^CNXIT',
+            'AUTO':    '^CNXAUTO',   'PHARMA':   '^CNXPHARMA',
+            'FMCG':    '^CNXFMCG',   'METAL':    '^CNXMETAL',
+            'ENERGY':  '^CNXENERGY', 'REALTY':   '^CNXREALTY',
+            'INFRA':   '^CNXINFRA',  'MEDIA':    '^CNXMEDIA',
+            'HEALTHCARE':'^CNXPHARMA',
+        }
+        # Fetch sector weekly SMA status — 6mo for speed, neutral on error
+        _sector_status = {}
+        for _sec_key, _sec_sym in SECTOR_ETF.items():
+            try:
+                _sf = yf.Ticker(_sec_sym).history(
+                    period='6mo', interval='1wk', auto_adjust=True, actions=False)
+                if _sf is None or len(_sf) < 15:
+                    _sector_status[_sec_key] = (True, 0); continue
+                _sf.columns = [c.split(' ')[0] if ' ' in str(c) else c for c in _sf.columns]
+                _sf = _sf[['Close']].dropna()
+                _sf['SMA20'] = _sf['Close'].rolling(min(20,len(_sf))).mean()
+                _s20v = float(_sf['SMA20'].iloc[-1])
+                _s50v = float(_sf['Close'].iloc[-min(50,len(_sf))])  # approx SMA50
+                _gap  = (_s20v-_s50v)/_s50v*100 if _s50v>0 else 0
+                _sector_status[_sec_key] = (_s20v>_s50v, round(_gap,2))
+            except Exception:
+                _sector_status[_sec_key] = (True, 0)
+
+        def _get_sector_status(sym):
+            """Map stock symbol to sector and return (bullish, gap%)"""
+            sym = sym.upper()
+            # Bank/Finance
+            if any(x in sym for x in ['BANK','HDFC','ICICI','AXIS','KOTAK','SBI','PNB','BOB','INDUSIND','FEDERAL','BANDHAN']):
+                return _sector_status.get('BANK',(True,0))
+            # IT
+            if any(x in sym for x in ['TCS','INFY','WIPRO','HCL','TECH','COFORGE','MPHASIS','LTIM','PERSISTENT']):
+                return _sector_status.get('IT',(True,0))
+            # Auto
+            if any(x in sym for x in ['MARUTI','TATAMOTOR','M&M','BAJAJ','HERO','EICHER','CRAFTSMAN','BOSCH','MINDA','SONA']):
+                return _sector_status.get('AUTO',(True,0))
+            # Pharma
+            if any(x in sym for x in ['SUNPHARMA','DRREDDY','CIPLA','DIVISLAB','AUROPHARMA','ALKEM','LUPIN','EMCURE']):
+                return _sector_status.get('PHARMA',(True,0))
+            # FMCG
+            if any(x in sym for x in ['HINDUNILVR','ITC','NESTL','DABUR','MARICO','COLGATE','GODREJCP']):
+                return _sector_status.get('FMCG',(True,0))
+            # Metal
+            if any(x in sym for x in ['TATASTEEL','JSWSTEEL','HINDALCO','VEDL','SAIL','NMDC']):
+                return _sector_status.get('METAL',(True,0))
+            # Energy
+            if any(x in sym for x in ['RELIANCE','ONGC','BPCL','IOC','NTPC','POWERGRID','NTPCGREEN']):
+                return _sector_status.get('ENERGY',(True,0))
+            # Default → assume neutral
+            return (True, 0)
+
+        # Results season months — Q4: Apr-May, Q1: Jul-Aug, Q2: Oct-Nov, Q3: Jan-Feb
+        _now_month = ist_now().month
+        _results_season = _now_month in [1,2,4,5,7,8,10,11]
+
+        _prog_ms.progress(5, text=f"📅 Nifty ✅ {'BULL' if _nifty_bullish else 'BEAR'} · Scanning {total} stocks...")
+
+        # ══════════════════════════════════════════════════
+        # PHASE 2 — Per-stock scan
+        # ══════════════════════════════════════════════════
         for idx, symbol in enumerate(stocks):
-            pct       = int(((idx+1)/total)*100)
+            pct       = 5 + int(((idx+1)/total)*95)
             sym_clean = symbol.replace('.NS','')
             _prog_ms.progress(pct, text=f"📅 {idx+1}/{total} · {sym_clean}")
 
@@ -9552,18 +9658,16 @@ if _show_monthlyswing:
                 _t = yf.Ticker(_ticker_sym)
 
                 # ── Fetch weekly candles ──────────────────
-                df = _t.history(
-                    period='2y', interval='1wk',
-                    auto_adjust=True, actions=False)
+                df = _t.history(period='2y', interval='1wk',
+                                auto_adjust=True, actions=False)
                 if df is None or len(df) < 30:
                     continue
-                df.columns = [c.split(' ')[0] if ' ' in str(c) else c
-                              for c in df.columns]
+                df.columns = [c.split(' ')[0] if ' ' in str(c) else c for c in df.columns]
                 df = df[['Open','High','Low','Close','Volume']].dropna()
                 if len(df) < 28:
                     continue
 
-                # ── Weekly indicators ─────────────────────
+                # ── Indicators ───────────────────────────
                 df['SMA20'] = df['Close'].rolling(20).mean()
                 df['SMA50'] = df['Close'].rolling(50).mean()
                 df['HL']    = df['High'] - df['Low']
@@ -9572,10 +9676,20 @@ if _show_monthlyswing:
                 df['TR']    = df[['HL','HPC','LPC']].max(axis=1)
                 df['ATR7']  = df['TR'].rolling(7).mean()
                 df['VOLMA'] = df['Volume'].rolling(10).mean()
-                df['RSI14'] = 100 - (100/(1+(
+                df['RSI14'] = 100-(100/(1+(
                     df['Close'].diff().clip(lower=0).rolling(14).mean()/
                     (-df['Close'].diff().clip(upper=0)).rolling(14).mean()
                 )))
+
+                # NEW: OBV
+                df['OBV'] = (df['Close'].diff().apply(
+                    lambda x: 1 if x>0 else (-1 if x<0 else 0)) * df['Volume']).cumsum()
+
+                # NEW: MACD on weekly
+                df['EMA12'] = df['Close'].ewm(span=12, adjust=False).mean()
+                df['EMA26'] = df['Close'].ewm(span=26, adjust=False).mean()
+                df['MACD']  = df['EMA12'] - df['EMA26']
+                df['MSIG']  = df['MACD'].ewm(span=9, adjust=False).mean()
 
                 l=df.iloc[-1]; p=df.iloc[-2]; p2=df.iloc[-3]; p3=df.iloc[-4]
 
@@ -9588,6 +9702,12 @@ if _show_monthlyswing:
                 vol     = float(l['Volume'])
                 vol_ma  = float(l['VOLMA'])
                 rsi     = float(l['RSI14'])
+                macd    = float(l['MACD'])
+                msig    = float(l['MSIG'])
+                macd_p  = float(p['MACD'])
+                msig_p  = float(p['MSIG'])
+                obv_now = float(l['OBV'])
+                obv_4w  = float(df['OBV'].iloc[-4]) if len(df)>=4 else obv_now
 
                 if any(pd.isna(x) for x in [sma20,sma50,atr7,vol_ma]) or atr7<=0:
                     continue
@@ -9596,210 +9716,410 @@ if _show_monthlyswing:
                 pct_above20 = (close-sma20)/sma20*100 if sma20>0 else 0
                 pct_above50 = (close-sma50)/sma50*100 if sma50>0 else 0
 
-                # ── SMA20 slope (weekly) ──────────────────
-                sma20_4w    = float(df['SMA20'].iloc[-4]) if len(df)>=4 else sma20
-                sma50_4w    = float(df['SMA50'].iloc[-4]) if len(df)>=4 else sma50
-                sma20_slope = (sma20-sma20_4w)/sma20_4w*100 if sma20_4w>0 else 0
-                sma50_slope = (sma50-sma50_4w)/sma50_4w*100 if sma50_4w>0 else 0
+                # Slopes
+                sma20_2w     = float(df['SMA20'].iloc[-2])
+                sma50_4w     = float(df['SMA50'].iloc[-4]) if len(df)>=4 else sma50
+                sma20_4w     = float(df['SMA20'].iloc[-4]) if len(df)>=4 else sma20
+                sma20_slope  = (sma20-sma20_2w)/sma20_2w*100 if sma20_2w>0 else 0
+                sma20_slope_4w=(sma20-sma20_4w)/sma20_4w*100 if sma20_4w>0 else 0
+                sma50_slope  = (sma50-sma50_4w)/sma50_4w*100 if sma50_4w>0 else 0
+
+                c0=float(l['Close']); c1=float(p['Close'])
+                c2=float(p2['Close']); c3=float(p3['Close'])
+                o0=float(l['Open'])
+                h0=float(l['High']); h1=float(p['High'])
+                lo0=float(l['Low']); lo1=float(p['Low'])
+
+                this_wk_move = abs(c0-c1)/c1*100 if c1>0 else 0
+
+                # ── Fibonacci Retracement Calculation ─────
+                # swing_low  = weekly SMA50 (base of trend)
+                # swing_high = 13-week high (peak of last rally)
+                # up_move    = full rally distance
+                # Retrace %  = how much price pulled back from peak
+                _swing_low  = sma50
+                _swing_high = float(df['High'].iloc[-13:].max()) if len(df)>=13 else float(df['High'].max())
+                _up_move    = _swing_high - _swing_low if _swing_high > _swing_low else 1
+                _retrace_pct= (_swing_high - close) / _up_move * 100 if _up_move > 0 else 0
+
+                # Fibonacci levels
+                _fib_236 = _swing_high - _up_move * 0.236
+                _fib_382 = _swing_high - _up_move * 0.382
+                _fib_500 = _swing_high - _up_move * 0.500
+                _fib_618 = _swing_high - _up_move * 0.618
+                _fib_786 = _swing_high - _up_move * 0.786
 
                 # ── HARD GATES ────────────────────────────
-                if sma20 <= sma50:          continue  # no uptrend
-                if sma20_slope <= 0:        continue  # SMA20 declining
-                if sma50_slope < -0.5:      continue  # base declining
-                if close <= sma20:          continue  # price below SMA20
+                if sma20<=sma50:          continue
+                if sma20_slope<=0:        continue
+                if sma50_slope<-0.5:      continue
+                if close<=sma20:          continue
 
-                # ── SIGNAL 1: Weekly SMA Cross ────────────
-                cross_w0 = sma20>sma50 and sma20_p<=float(p['SMA50'])
-                cross_w1 = float(p['SMA20'])>float(p['SMA50']) and float(p2['SMA20'])<=float(p2['SMA50'])
-                cross_w2 = float(p2['SMA20'])>float(p2['SMA50']) and float(p3['SMA20'])<=float(p3['SMA50'])
+                # ── ENTRY FILTERS ─────────────────────────
+                last3_red = c0<c1 and c1<c2 and c2<c3
+                if last3_red:             continue
+                recovering = c0>c1 or c0>o0
+                if not recovering:        continue
+                if pct_above20>5:         continue
+
+                # Fibonacci gate: reject if retrace > 78.6% (trend broken)
+                # or retrace < 15% (not pulled back enough — near high)
+                if _retrace_pct > 78.6:   continue  # too deep — trend broken
+                if _retrace_pct < 15:     continue  # not pulled back — near high
+
+                if this_wk_move>8:        continue
+                if rsi>70:                continue
+
+                # NEW: Relative strength vs Nifty (hard reject if badly underperforming)
+                _rs_ratio = 1.0
+                if _nifty_closes.get(0) and _nifty_closes.get(4):
+                    _stk_4w  = float(df['Close'].iloc[-4]) if len(df)>=4 else close
+                    _rs_ratio= (close/_stk_4w) / (_nifty_closes[0]/_nifty_closes[4]) if _stk_4w>0 else 1.0
+                if _rs_ratio < 0.95:      continue  # badly underperforming Nifty → skip
+
+                # ── SIGNALS ───────────────────────────────
+                cross_w0  = sma20>sma50 and sma20_p<=float(p['SMA50'])
+                cross_w1  = float(p['SMA20'])>float(p['SMA50']) and float(p2['SMA20'])<=float(p2['SMA50'])
+                cross_w2  = float(p2['SMA20'])>float(p2['SMA50']) and float(p3['SMA20'])<=float(p3['SMA50'])
                 has_cross = cross_w0 or cross_w1 or cross_w2
                 cross_age = 0 if cross_w0 else (1 if cross_w1 else 2)
 
-                # ── SIGNAL 2: Weekly Pullback Bounce ─────
-                # Uptrend established ≥ 4 weekly candles
-                trend_weeks = 0
-                for i in range(1, min(20, len(df))):
-                    if float(df['SMA20'].iloc[-i])>float(df['SMA50'].iloc[-i]):
-                        trend_weeks += 1
-                    else:
-                        break
+                trend_weeks=0
+                for i in range(1,min(20,len(df))):
+                    if float(df['SMA20'].iloc[-i])>float(df['SMA50'].iloc[-i]): trend_weeks+=1
+                    else: break
 
-                pb_found = False; pb_age = 0
-                if trend_weeks >= 4:
-                    for i in range(1, 4):  # last 3 weekly candles
-                        row_low = float(df['Low'].iloc[-i])
-                        row_sma = float(df['SMA20'].iloc[-i])
-                        if abs(row_low-row_sma)/row_sma*100<=2.0 or row_low<=row_sma:
-                            pb_found = True; pb_age = i; break
+                pb_found=False; pb_age=0
+                if trend_weeks>=4:
+                    for i in range(1,3):
+                        rl=float(df['Low'].iloc[-i]); rs=float(df['SMA20'].iloc[-i])
+                        if abs(rl-rs)/rs*100<=1.5 or rl<=rs:
+                            pb_found=True; pb_age=i; break
+                has_pb = pb_found and close>=sma20*1.002 and pct_above20<=5
 
-                has_pb = pb_found and close>=sma20*1.002 and pct_above20<=8
+                high_13w  = float(df['High'].iloc[-14:-1].max()) if len(df)>=14 else 0
+                is_brkout = (close>high_13w and vol_ratio>=1.5) if high_13w>0 else False
 
-                # ── SIGNAL 3: 13-Week High Breakout ──────
-                high_13w    = float(df['High'].iloc[-13:-1].max()) if len(df)>=14 else 0
-                is_breakout = close > high_13w * 0.99 if high_13w > 0 else False
-                # Volume must expand on breakout
-                breakout_vol= vol_ratio >= 1.5
-
-                if not has_cross and not has_pb and not is_breakout:
+                if not has_cross and not has_pb and not is_brkout:
                     continue
 
-                # Signal label
-                signals = []
-                if has_cross:   signals.append(f"🔀 Weekly cross {cross_age}wk ago")
-                if has_pb:      signals.append(f"📉 Wkly pullback {pb_age}wk ago")
-                if is_breakout: signals.append(f"🚀 13-week high breakout")
-                signal_label = " + ".join(signals)
-                signal_count = len(signals)
-
-                # ── Higher Highs / Lows (monthly) ────────
-                # Each period = 4 weekly candles = 1 month
-                m1h = float(df['High'].iloc[-4:].max())
-                m2h = float(df['High'].iloc[-8:-4].max())
-                m3h = float(df['High'].iloc[-12:-8].max())
-                m1l = float(df['Low'].iloc[-4:].min())
-                m2l = float(df['Low'].iloc[-8:-4].min())
-                m3l = float(df['Low'].iloc[-12:-8].min())
-                hh  = m1h > m2h > m3h
-                hl  = m1l > m2l > m3l
-
-                extended = pct_above50 > 20
+                if rsi>70:     continue
+                if this_wk_move>8: continue
 
                 # ── SCORING ───────────────────────────────
-                score = 0
+                score=0
 
-                # Signal bonus (max 30)
-                if signal_count >= 3:       score += 30
-                elif signal_count == 2:     score += 25
-                else:
-                    if has_cross:
-                        score += 25 if cross_age==0 else (18 if cross_age==1 else 12)
-                    elif has_pb:
-                        score += 22 if pb_age==1 else (16 if pb_age==2 else 10)
-                    elif is_breakout and breakout_vol:
-                        score += 20
-                    elif is_breakout:
-                        score += 12
+                # Signal (max 30)
+                cb=(25 if cross_age==0 else 18 if cross_age==1 else 12) if has_cross else 0
+                pb=(22 if pb_age==1 else 16) if has_pb else 0
+                ib=20 if (is_brkout and vol_ratio>=1.5) else (12 if is_brkout else 0)
+                sc=len([x for x in [has_cross,has_pb,is_brkout] if x])
+                if sc>=2:   score+=min(30,max(cb,pb,ib)+5)
+                elif sc==1: score+=max(cb,pb,ib)
 
-                # Price vs weekly SMA20 (max 20)
-                score += (20 if pct_above20<=1 else 15 if pct_above20<=3 else
-                          10 if pct_above20<=5 else 5 if pct_above20<=8 else 0)
+                # Price vs SMA20 (max 20)
+                score+=(20 if pct_above20<=1 else 15 if pct_above20<=2 else
+                        10 if pct_above20<=3 else 5)
 
                 # Trend weeks (max 10)
-                score += (10 if trend_weeks>=12 else 7 if trend_weeks>=8 else
-                          4 if trend_weeks>=4 else 0)
+                score+=(10 if trend_weeks>=12 else 7 if trend_weeks>=8 else
+                        4 if trend_weeks>=4 else 0)
 
-                # Weekly RSI (max 15)
-                score += (15 if 45<=rsi<=65 else
-                          8 if 40<=rsi<45 or 65<rsi<=70 else 0)
+                # RSI (max 15)
+                score+=(15 if 45<=rsi<=65 else 8 if (40<=rsi<45 or 65<rsi<=70) else 0)
 
-                # Weekly volume (max 15)
-                score += (15 if vol_ratio>=2.0 else 10 if vol_ratio>=1.5 else
-                          5 if vol_ratio>=1.0 else 0)
+                # Volume (max 15)
+                score+=(15 if vol_ratio>=2.0 else 10 if vol_ratio>=1.5 else
+                        5 if vol_ratio>=1.0 else 0)
 
-                # SMA20 weekly slope (max 10)
-                score += (10 if sma20_slope>=1.0 else 7 if sma20_slope>=0.5 else
-                          4 if sma20_slope>=0.2 else 1)
+                # SMA20 slope 4wk (max 10)
+                score+=(10 if sma20_slope_4w>=1.0 else 7 if sma20_slope_4w>=0.5 else
+                        4 if sma20_slope_4w>=0.2 else 1)
 
-                # Monthly HH + HL (max 10)
-                if hh and hl:   score += 10
-                elif hh:        score += 6
-                elif hl:        score += 4
+                # HH + HL monthly (max 10)
+                m1h=float(df['High'].iloc[-4:].max()); m2h=float(df['High'].iloc[-8:-4].max())
+                m3h=float(df['High'].iloc[-12:-8].max())
+                m1l=float(df['Low'].iloc[-4:].min());  m2l=float(df['Low'].iloc[-8:-4].min())
+                m3l=float(df['Low'].iloc[-12:-8].min())
+                hh=m1h>m2h>m3h; hl=m1l>m2l>m3l
+                if hh and hl: score+=10
+                elif hh: score+=6
+                elif hl: score+=4
 
                 # Gap widening (max 10)
-                gap_now  = (sma20-sma50)/sma50*100 if sma50>0 else 0
-                gap_prev = (sma20_p-sma50_p)/sma50_p*100 if sma50_p>0 else 0
-                if gap_now > gap_prev: score += 10
+                gap_now=(sma20-sma50)/sma50*100 if sma50>0 else 0
+                gap_prev=(sma20_p-sma50_p)/sma50_p*100 if sma50_p>0 else 0
+                if gap_now>gap_prev: score+=10
 
-                # Extended penalty
-                if pct_above50 > 20:   score -= 15
-                elif pct_above50 > 15: score -= 5
+                # Vol direction (max 5)
+                up_v=sum(float(df['Volume'].iloc[-i]) for i in range(1,5)
+                         if float(df['Close'].iloc[-i])>float(df['Open'].iloc[-i]))
+                dn_v=sum(float(df['Volume'].iloc[-i]) for i in range(1,5)
+                         if float(df['Close'].iloc[-i])<=float(df['Open'].iloc[-i]))
+                vol_healthy=up_v>=dn_v
+                if vol_healthy: score+=5
+
+                # Recovery bonus (max 5)
+                if c0>o0 and c0>c1: score+=5
+
+                # Nifty alignment (max +10, min −10)
+                if _nifty_bullish:  score += 10
+                else:               score -= 10   # bearish Nifty = penalty not block
+
+                # NEW: Relative strength vs Nifty (max 10)
+                if   _rs_ratio>=1.05: score+=10   # outperforming +5%+
+                elif _rs_ratio>=1.02: score+=7    # outperforming +2%+
+                elif _rs_ratio>=1.0:  score+=4    # slightly outperforming
+                else:                 score-=5    # underperforming (but >0.95)
+
+                # NEW: OBV rising (max 10)
+                obv_slope = (obv_now-obv_4w)/abs(obv_4w)*100 if obv_4w!=0 else 0
+                if   obv_slope>5:   score+=10  # strong accumulation
+                elif obv_slope>0:   score+=6   # mild accumulation
+                elif obv_slope>-5:  score+=0   # neutral
+                else:               score-=10  # distribution — heavy penalty
+
+                # NEW: Sector momentum (max 8)
+                _sec_bull, _sec_gap = _get_sector_status(sym_clean)
+                if   _sec_bull and _sec_gap>1: score+=8   # sector strong
+                elif _sec_bull:                score+=4   # sector mild bull
+                else:                          score-=8   # sector bearish
+
+                # NEW: 52-week high proximity (max 10)
+                high_52w     = float(df['High'].tail(52).max()) if len(df)>=52 else float(df['High'].max())
+                pct_from_52w = (high_52w-close)/high_52w*100 if high_52w>0 else 50
+                if   pct_from_52w<=5:  score+=10  # within 5% — near breakout
+                elif pct_from_52w<=10: score+=7   # within 10%
+                elif pct_from_52w<=20: score+=3   # within 20%
+                elif pct_from_52w>30:  score-=15  # far from high — downtrend
+
+                # NEW: Weekly MACD (max 12)
+                macd_cross_up  = macd>msig and macd_p<=msig_p  # just crossed
+                macd_above_sig = macd>msig
+                macd_above_zero= macd>0
+                if   macd_cross_up:               score+=12  # fresh cross = strongest
+                elif macd_above_sig and macd_above_zero: score+=8
+                elif macd_above_sig:              score+=4
+                else:                             score-=6   # MACD below signal
+
+                # NEW: Inside week / tight base (max 8)
+                inside_week  = h0<h1 and lo0>lo1
+                week_range   = (h0-lo0)/lo0*100 if lo0>0 else 10
+                if   inside_week:      score+=8   # energy building
+                elif week_range<=5:    score+=5   # tight base
+                elif week_range>10:    score-=5   # volatile/unsettled
+
+                # ── Fibonacci Retracement Score ────────────
+                # Replaces old "extended penalty"
+                # Rewards stocks in ideal pullback zone
+                # Penalises stocks near highs or in deep correction
+                if   _retrace_pct < 23.6:   score -= 10  # too shallow — near high
+                elif _retrace_pct < 38.2:   score += 20  # 23-38% — ideal pullback ✅✅
+                elif _retrace_pct < 50.0:   score += 15  # 38-50% — good pullback ✅
+                elif _retrace_pct < 61.8:   score += 10  # 50-61% — acceptable ✅
+                elif _retrace_pct < 78.6:   score -= 5   # 61-78% — deep, still ok ⚠️
+                # >78.6% already rejected as hard gate above
+
+                if score<min_score:
+                    continue
+
+                # ══════════════════════════════════════════
+                # FUNDAMENTAL FILTER
+                # Only fetched for stocks passing all technical
+                # filters — minimal speed impact (5-15 stocks)
+                # ══════════════════════════════════════════
+                _de          = None   # debt to equity
+                _promoter    = None   # insider/promoter holding
+                _eps         = None   # trailing EPS
+                _earn_date   = None   # next results date
+                _earn_warn   = False  # results in next 4 weeks
+                _fund_reject = False
+                _fund_reason = ''
+
+                try:
+                    _fi = _t.info  # reuse existing ticker object
+                    _de       = _fi.get('debtToEquity', None)
+                    _promoter = _fi.get('heldPercentInsiders', None)
+                    _eps      = _fi.get('trailingEps', None)
+                    _roe      = _fi.get('returnOnEquity', None)
+
+                    # Earnings date warning
+                    _earn_raw = _fi.get('earningsTimestamps', None) or \
+                                _fi.get('earningsDate', None)
+                    if _earn_raw:
+                        import datetime as _dt
+                        try:
+                            if isinstance(_earn_raw, (list, tuple)):
+                                _earn_ts = _earn_raw[0]
+                            else:
+                                _earn_ts = _earn_raw
+                            if hasattr(_earn_ts, 'timestamp'):
+                                _earn_ts = _earn_ts.timestamp()
+                            _earn_dt   = _dt.datetime.fromtimestamp(float(_earn_ts))
+                            _days_away = (_earn_dt - _dt.datetime.now()).days
+                            if 0 <= _days_away <= 28:
+                                _earn_warn = True
+                                _earn_date = _earn_dt.strftime('%d %b')
+                        except Exception:
+                            pass
+
+                    # ── HARD REJECT ──────────────────────
+                    # D/E > 2.0 → too much debt
+                    if _de is not None and _de > 200:  # yfinance gives as %
+                        _fund_reject = True
+                        _fund_reason = f'High debt D/E={_de/100:.1f}'
+
+                    # EPS < 0 → loss making
+                    elif _eps is not None and _eps < 0:
+                        _fund_reject = True
+                        _fund_reason = f'Loss making EPS={_eps:.2f}'
+
+                    # Promoter < 20% → no conviction
+                    elif _promoter is not None and _promoter < 0.20:
+                        _fund_reject = True
+                        _fund_reason = f'Low promoter {_promoter*100:.0f}%'
+
+                except Exception:
+                    pass  # if fundamental fetch fails, continue without it
+
+                if _fund_reject:
+                    continue
+
+                # ── Fundamental scoring ───────────────────
+                # D/E score
+                if _de is not None:
+                    _de_val = _de / 100  # yfinance gives as percentage
+                    if   _de_val < 0.3:  score += 8   # nearly debt free
+                    elif _de_val < 0.5:  score += 5
+                    elif _de_val < 1.0:  score += 3
+                    elif _de_val < 1.5:  score += 0
+                    elif _de_val < 2.0:  score -= 5
+                    # > 2.0 already rejected above
+
+                # Promoter holding score
+                if _promoter is not None:
+                    if   _promoter >= 0.60: score += 8  # founder strongly backing
+                    elif _promoter >= 0.50: score += 5
+                    elif _promoter >= 0.35: score += 2
+                    elif _promoter >= 0.20: score += 0
+                    # < 0.20 already rejected above
+
+                # Results warning penalty
+                if _earn_warn:
+                    score -= 8  # reduce score, don't reject
+                    # Still show on card as warning
 
                 if score < min_score:
                     continue
 
                 # ── Trade plan ────────────────────────────
-                entry  = close
-                # SL = wider for monthly hold
-                # 2× weekly ATR OR below weekly SMA20 × 0.97
-                sl_atr  = round(entry - 2.0*atr7, 2)
-                sl_sma  = round(sma20 * 0.97, 2)
-                sl      = max(sl_atr, sl_sma)  # less aggressive = higher value
-                risk_d  = entry - sl
-                if risk_d <= 0: continue
+                entry = close
+                sl    = max(round(close-2.0*atr7,2), round(sma20*0.97,2))
+                risk_d= entry-sl
+                if risk_d<=0: continue
 
-                t1 = round(entry + 1.0*atr7, 2)
-                t2 = round(entry + 2.0*atr7, 2)
-                t3 = round(entry + 3.0*atr7, 2)
+                t1 = round(entry+1.0*atr7,2)
+                t2 = round(entry+2.0*atr7,2)
+                t3 = round(entry+3.0*atr7,2)
+                qty= max(1,int((capital*risk_pct/100)/risk_d))
+                inv= round(entry*qty,2)
+                rr1= round((t1-entry)/risk_d,1)
+                rr2= round((t2-entry)/risk_d,1)
+                rr3= round((t3-entry)/risk_d,1)
+                mchg=round((close-float(df['Close'].iloc[-5]))/float(df['Close'].iloc[-5])*100,2) if len(df)>=5 else 0
 
-                qty    = max(1, int((capital*risk_pct/100)/risk_d))
-                inv    = round(entry*qty, 2)
-                rr_t1  = round((t1-entry)/risk_d, 1)
-                rr_t2  = round((t2-entry)/risk_d, 1)
-                rr_t3  = round((t3-entry)/risk_d, 1)
+                # Liquidity
+                _dv=vol_ma*close
+                if _dv>=500_000_000:   _lg='EXCELLENT'; _lc='#15803d'; _lb='#dcfce7'; _li='✅'
+                elif _dv>=100_000_000: _lg='HIGH';      _lc='#1d4ed8'; _lb='#dbeafe'; _li='🔵'
+                elif _dv>=20_000_000:  _lg='MEDIUM';    _lc='#d97706'; _lb='#fef3c7'; _li='🟡'
+                else:                  _lg='LOW';        _lc='#dc2626'; _lb='#fee2e2'; _li='🔴'
+                if _dv>=1_000_000_000: _lt=f"₹{_dv/1_000_000_000:.1f}K Cr/wk"
+                elif _dv>=10_000_000:  _lt=f"₹{_dv/10_000_000:.0f} Cr/wk"
+                else:                  _lt=f"₹{_dv/100_000:.0f} L/wk"
 
-                # Monthly change (4 weeks)
-                mchg = round((close-float(df.iloc[-5]['Close']))/float(df.iloc[-5]['Close'])*100,2) if len(df)>=5 else 0
+                _rank=round(score*rr2,1)
+                cap_tier=get_cap_tier(sym_clean)
 
-                # Daily liquidity
-                _dv  = vol_ma * close
-                if _dv >= 500_000_000:   _lg='EXCELLENT'; _lc='#15803d'; _lb='#dcfce7'; _li='✅'
-                elif _dv >= 100_000_000: _lg='HIGH';      _lc='#1d4ed8'; _lb='#dbeafe'; _li='🔵'
-                elif _dv >= 20_000_000:  _lg='MEDIUM';    _lc='#d97706'; _lb='#fef3c7'; _li='🟡'
-                else:                    _lg='LOW';        _lc='#dc2626'; _lb='#fee2e2'; _li='🔴'
-                if _dv>=1_000_000_000:   _lt=f"₹{_dv/1_000_000_000:.1f}K Cr/wk"
-                elif _dv>=10_000_000:    _lt=f"₹{_dv/10_000_000:.0f} Cr/wk"
-                else:                    _lt=f"₹{_dv/100_000:.0f} L/wk"
-
-                _rank = round(score * rr_t2, 1)
-                cap_tier = get_cap_tier(sym_clean)
+                # Signal label
+                sigs=[]
+                if has_cross:   sigs.append(f"🔀 Weekly cross {cross_age}wk ago")
+                if has_pb:      sigs.append(f"📉 Pullback {pb_age}wk ago")
+                if is_brkout:   sigs.append(f"🚀 13wk breakout")
+                signal_label=' + '.join(sigs)
 
                 results.append({
-                    'symbol':        sym_clean,
-                    'score':         score,
-                    '_rank':         _rank,
-                    'close':         round(close,2),
-                    'sma20':         round(sma20,2),
-                    'sma50':         round(sma50,2),
-                    'atr7':          round(atr7,2),
-                    'rsi':           round(rsi,1),
-                    'vol_ratio':     round(vol_ratio,1),
-                    'trend_weeks':   trend_weeks,
-                    'signal_label':  signal_label,
-                    'signal_count':  signal_count,
-                    'has_cross':     has_cross,
-                    'has_pb':        has_pb,
-                    'is_breakout':   is_breakout,
-                    'cross_age':     cross_age if has_cross else 99,
-                    'pb_age':        pb_age,
-                    'hh':            hh, 'hl': hl,
-                    'sma20_slope':   round(sma20_slope,2),
-                    'pct_above20':   round(pct_above20,1),
-                    'pct_above50':   round(pct_above50,1),
-                    'month_chg':     mchg,
-                    'entry':         round(entry,2),
-                    'sl':            sl,
-                    't1':            t1, 't2': t2, 't3': t3,
-                    'qty':           qty, 'inv': inv,
-                    'risk_d':        round(risk_d,2),
-                    'rr_t1':         rr_t1, 'rr_t2': rr_t2, 'rr_t3': rr_t3,
-                    'liq_grade':     _lg, 'liq_clr': _lc, 'liq_bg': _lb,
-                    'liq_ico':       _li, 'liq_turn': _lt,
-                    'cap_tier':      cap_tier,
+                    'symbol':       sym_clean,
+                    'score':        score,
+                    '_rank':        _rank,
+                    'close':        round(close,2),
+                    'sma20':        round(sma20,2),
+                    'sma50':        round(sma50,2),
+                    'atr7':         round(atr7,2),
+                    'rsi':          round(rsi,1),
+                    'vol_ratio':    round(vol_ratio,1),
+                    'trend_weeks':  trend_weeks,
+                    'signal_label': signal_label,
+                    'signal_count': len(sigs),
+                    'has_cross':    has_cross,
+                    'has_pb':       has_pb,
+                    'is_breakout':  is_brkout,
+                    'cross_age':    cross_age if has_cross else 99,
+                    'pb_age':       pb_age,
+                    'hh': hh, 'hl': hl,
+                    'sma20_slope':  round(sma20_slope,2),
+                    'sma20_slope_4w':round(sma20_slope_4w,2),
+                    'pct_above20':  round(pct_above20,1),
+                    'pct_above50':  round(pct_above50,1),
+                    'month_chg':    mchg,
+                    # Fibonacci retracement
+                    'fib_retrace':  round(_retrace_pct,1),
+                    'fib_382':      round(_fib_382,2),
+                    'fib_500':      round(_fib_500,2),
+                    'fib_618':      round(_fib_618,2),
+                    'swing_high':   round(_swing_high,2),
+                    'swing_low':    round(_swing_low,2),
+                    # Fundamentals
+                    'de_ratio':     round(_de/100,2) if _de is not None else None,
+                    'promoter':     round(_promoter*100,1) if _promoter is not None else None,
+                    'eps':          round(_eps,2) if _eps is not None else None,
+                    'earn_warn':    _earn_warn,
+                    'earn_date':    _earn_date,
+                    'entry':        round(entry,2),
+                    'sl':           sl,
+                    't1': t1, 't2': t2, 't3': t3,
+                    'qty': qty, 'inv': inv,
+                    'risk_d':       round(risk_d,2),
+                    'rr_t1': rr1, 'rr_t2': rr2, 'rr_t3': rr3,
+                    'liq_grade': _lg, 'liq_clr': _lc, 'liq_bg': _lb,
+                    'liq_ico':  _li, 'liq_turn': _lt,
+                    'cap_tier':     cap_tier,
+                    # New fields
+                    'rs_ratio':     round(_rs_ratio,3),
+                    'obv_slope':    round(obv_slope,1),
+                    'macd_cross':   macd_cross_up,
+                    'macd_above':   macd_above_sig,
+                    'sec_bull':     _sec_bull,
+                    'sec_gap':      _sec_gap,
+                    'pct_from_52w': round(pct_from_52w,1),
+                    'inside_week':  inside_week,
+                    'week_range':   round(week_range,1),
+                    'results_season': _results_season,
+                    'nifty_bullish': _nifty_bullish,
                 })
 
-                if len(results) % 3 == 0:
+                if len(results)%3==0:
                     _stat_ms.markdown(
                         f"<div style='font-size:12px;color:#7c3aed;padding:4px 0'>"
-                        f"📅 {len(results)} monthly swing signals found...</div>",
+                        f"📅 {len(results)} signals found...</div>",
                         unsafe_allow_html=True)
 
-            except Exception:
-                continue
+            except Exception as _e:
+                continue  # silent — don't break scan for one bad stock
 
         _prog_ms.empty(); _stat_ms.empty()
         results.sort(key=lambda x: x['_rank'], reverse=True)
         return results
-
     # ── Scan button ────────────────────────────────────
     _ms_run = st.button(
         "📅 Scan for Monthly Swing Trades",
@@ -9814,12 +10134,23 @@ if _show_monthlyswing:
             if _yfc.exists(): shutil.rmtree(_yfc, ignore_errors=True)
         except Exception:
             pass
-        with st.spinner(f"📅 Scanning {len(_ms_stocks)} weekly charts..."):
+        _ms_debug = st.empty()
+        _ms_debug.info("📅 Starting scan — fetching Nifty + sector data...")
+        try:
             _ms_results = scan_monthly_swing(
                 _ms_stocks, _ms_capital, _ms_risk, _ms_min_score)
+            _ms_debug.empty()
+        except Exception as _ms_err:
+            _ms_debug.error(f"❌ Scan error: {str(_ms_err)}")
+            _ms_results = []
         st.session_state['ms_results']   = _ms_results
         st.session_state['ms_scan_time'] = ist_now().strftime('%d %b %Y %H:%M IST')
-        st.rerun()
+        # Store Nifty status for topbar display
+        st.session_state['ms_nifty_bullish'] = st.session_state.get('_ms_nifty_temp', None)
+        if _ms_results:
+            st.rerun()
+        else:
+            st.warning(f"⚠️ No signals found. Try lowering min score to 50 or select a broader universe.")
 
     # ── Results ────────────────────────────────────────
     _ms_results  = st.session_state.get('ms_results', [])
@@ -9904,6 +10235,46 @@ if _show_monthlyswing:
             _lb   = _ms_r['liq_bg']
             _li   = _ms_r['liq_ico']
             _lt   = _ms_r['liq_turn']
+            # Fibonacci
+            _fib_ret  = _ms_r.get('fib_retrace', 0)
+            _fib_382  = _ms_r.get('fib_382', 0)
+            _fib_618  = _ms_r.get('fib_618', 0)
+            _swh      = _ms_r.get('swing_high', 0)
+            _swl      = _ms_r.get('swing_low', 0)
+            _fib_zone = ('🟢 23-38% Ideal' if _fib_ret<38.2 and _fib_ret>=23.6
+                         else '🟢 38-50% Good' if _fib_ret<50
+                         else '🟡 50-61% OK'   if _fib_ret<61.8
+                         else '⚠️ 61-78% Deep' if _fib_ret<78.6
+                         else '🔴 >78% Weak')
+            _fib_clr  = ('#15803d' if _fib_ret<50
+                         else '#d97706' if _fib_ret<61.8
+                         else '#dc2626')
+            # Fundamentals
+            _de_val   = _ms_r.get('de_ratio', None)
+            _prom_val = _ms_r.get('promoter', None)
+            _eps_val  = _ms_r.get('eps', None)
+            _ew       = _ms_r.get('earn_warn', False)
+            _ed       = _ms_r.get('earn_date', '')
+            _de_clr   = ('#15803d' if _de_val is not None and _de_val<0.5
+                         else '#d97706' if _de_val is not None and _de_val<1.0
+                         else '#dc2626' if _de_val is not None
+                         else '#64748b')
+            _prom_clr = ('#15803d' if _prom_val is not None and _prom_val>=50
+                         else '#1d4ed8' if _prom_val is not None and _prom_val>=35
+                         else '#64748b')
+            _de_str   = f"D/E {_de_val:.2f}" if _de_val is not None else "D/E N/A"
+            _prom_str = f"Promoter {_prom_val:.0f}%" if _prom_val is not None else "Promoter N/A"
+            _eps_str  = f"EPS ₹{_eps_val:.1f}" if _eps_val is not None else ""
+            # New fields
+            _rs   = _ms_r.get('rs_ratio', 1.0)
+            _obv  = _ms_r.get('obv_slope', 0)
+            _macd_x = _ms_r.get('macd_cross', False)
+            _macd_a = _ms_r.get('macd_above', False)
+            _sec_b  = _ms_r.get('sec_bull', True)
+            _52w    = _ms_r.get('pct_from_52w', 20)
+            _inw    = _ms_r.get('inside_week', False)
+            _wkrng  = _ms_r.get('week_range', 5)
+            _rseas  = _ms_r.get('results_season', False)
 
             # Colours
             _sc_clr = '#15803d' if _sc>=80 else ('#1d4ed8' if _sc>=70 else '#d97706')
@@ -9976,23 +10347,47 @@ if _show_monthlyswing:
                 </div>
             </div>""", unsafe_allow_html=True)
 
-            # ── Trend quality row ─────────────────────
-            st.markdown(f"""
-            <div style='background:#f8fafc;border-radius:8px;padding:8px 14px;
-                        margin-bottom:10px;display:flex;gap:16px;flex-wrap:wrap;
-                        font-size:11px'>
-                <span>📈 HH: <b style='color:{"#15803d" if _hh else "#dc2626"}'>
-                    {"✅ Yes" if _hh else "❌ No"}</b></span>
-                <span>📈 HL: <b style='color:{"#15803d" if _hl else "#dc2626"}'>
-                    {"✅ Yes" if _hl else "❌ No"}</b></span>
-                <span>📐 Slope: <b style='color:{_sl_clr2}'>{_sl_lbl} {_sl_str:+.2f}%</b></span>
-                <span>📏 vs SMA50: <b style='color:{"#dc2626" if _p50>20 else "#15803d"}'>
-                    {"⚠️ Extended" if _p50>20 else "✅ Normal"} +{_p50:.1f}%</b></span>
-                <span>📊 vs SMA20: <b style='color:{"#15803d" if _p20<=3 else "#d97706"}'>
-                    +{_p20:.1f}%</b></span>
-                <span>⏳ Trend: <b style='color:#7c3aed'>{_tw}wk</b></span>
-                <span>📉 Wkly ATR: <b style='color:#1a2035'>₹{_atr:,.2f}</b></span>
-            </div>""", unsafe_allow_html=True)
+            # ── Trend quality row (all 8 checks) ──────
+            _sl_clr2 = '#15803d' if _sl_str>=0.5 else ('#d97706' if _sl_str>0 else '#dc2626')
+            _sl_lbl  = 'Strong' if _sl_str>=1.0 else ('Rising' if _sl_str>=0.5 else 'Weak')
+            _rs_clr  = '#15803d' if _rs>=1.02 else ('#d97706' if _rs>=1.0 else '#dc2626')
+            _obv_clr = '#15803d' if _obv>0 else '#dc2626'
+            _macd_clr= '#15803d' if _macd_x else ('#1d4ed8' if _macd_a else '#dc2626')
+            _macd_lbl= 'Fresh cross' if _macd_x else ('Above signal' if _macd_a else 'Below signal')
+            _sec_clr = '#15803d' if _sec_b else '#dc2626'
+            _52w_clr = '#15803d' if _52w<=10 else ('#d97706' if _52w<=20 else '#dc2626')
+            st.markdown(
+                f"<div style='background:#f8fafc;border-radius:8px;padding:10px 14px;"
+                f"margin-bottom:10px;font-size:11px'>"
+                f"<div style='display:flex;gap:12px;flex-wrap:wrap;margin-bottom:5px'>"
+                f"<span>HH:{'✅' if _hh else '❌'}</span>"
+                f"<span>HL:{'✅' if _hl else '❌'}</span>"
+                f"<span>SMA20 slope:<b style='color:{_sl_clr2}'>{_sl_lbl} {_sl_str:+.2f}%</b></span>"
+                f"<span>vs SMA20:<b style='color:{'#15803d' if _p20<=3 else '#d97706'}'>+{_p20:.1f}%</b></span>"
+                f"<span>vs SMA50:<b>+{_p50:.1f}%</b></span>"
+                f"<span>Trend {_tw}wk</span>"
+                f"<span>ATR ₹{_atr:,.2f}</span>"
+                f"</div>"
+                f"<div style='display:flex;gap:12px;flex-wrap:wrap;"
+                f"padding-top:5px;border-top:1px solid #e2e8f0'>"
+                f"<span>📐 Fib: <b style='color:{_fib_clr}'>{_fib_zone} ({_fib_ret:.1f}%)</b></span>"
+                f"<span>Fib38=₹{_fib_382:,.0f} · Fib62=₹{_fib_618:,.0f}</span>"
+                f"<span>RS:<b style='color:{_rs_clr}'>{'+' if _rs>=1 else ''}{(_rs-1)*100:.1f}%</b></span>"
+                f"<span>OBV:<b style='color:{_obv_clr}'>{'↑Accum' if _obv>0 else '↓Distrib'}</b></span>"
+                f"<span>MACD:<b style='color:{_macd_clr}'>{_macd_lbl}</b></span>"
+                f"<span>Sector:<b style='color:{_sec_clr}'>{'✅' if _sec_b else '❌'}</b></span>"
+                f"<span>52W:<b style='color:{_52w_clr}'>{_52w:.1f}%↓</b></span>"
+                f"<span>{'✅InsideWk' if _inw else f'{_wkrng:.1f}%rng'}</span>"
+                f"{'<span><b style=color:#d97706>⚠️Results</b></span>' if _rseas else ''}"
+                f"</div>"
+                f"<div style='display:flex;gap:12px;flex-wrap:wrap;"
+                f"padding-top:5px;border-top:1px solid #e2e8f0'>"
+                f"<span>💰 <b style='color:{_de_clr}'>{_de_str}</b></span>"
+                f"<span>👤 <b style='color:{_prom_clr}'>{_prom_str}</b></span>"
+                f"{'<span><b>' + _eps_str + '</b></span>' if _eps_str else ''}"
+                f"{'<span style=color:#dc2626><b>⚠️ Results ' + _ed + ' — verify before entry</b></span>' if _ew else ''}"
+                f"</div></div>",
+                unsafe_allow_html=True)
 
             # ── Targets ───────────────────────────────
             st.markdown(f"""
