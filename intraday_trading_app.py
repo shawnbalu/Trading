@@ -76,7 +76,34 @@ if not KITE_AVAILABLE and not YF_AVAILABLE:
              "   Or yfinance fallback: pip3 install yfinance"); st.stop()
 
 # ── Kite credentials file (saves API key/secret/token) ───
-KITE_CREDS_FILE = pathlib.Path.home() / "Downloads" / "kite_creds.json"
+KITE_CREDS_FILE     = pathlib.Path.home() / "Downloads" / "kite_creds.json"
+ANTHROPIC_CREDS_FILE= pathlib.Path.home() / "Downloads" / "anthropic_creds.json"
+
+def load_anthropic_key() -> str:
+    """Load Anthropic API key from file or session state."""
+    # 1. Check session state first (set via sidebar input)
+    if st.session_state.get('anthropic_api_key'):
+        return st.session_state['anthropic_api_key']
+    # 2. Check local file
+    try:
+        if ANTHROPIC_CREDS_FILE.exists():
+            data = json.loads(ANTHROPIC_CREDS_FILE.read_text(encoding='utf-8'))
+            key  = data.get('api_key', '')
+            if key:
+                st.session_state['anthropic_api_key'] = key
+                return key
+    except Exception:
+        pass
+    return ''
+
+def save_anthropic_key(key: str):
+    """Save Anthropic API key to file."""
+    try:
+        ANTHROPIC_CREDS_FILE.write_text(
+            json.dumps({'api_key': key}, indent=2, ensure_ascii=False),
+            encoding='utf-8')
+    except Exception as e:
+        st.warning(f"⚠️ Could not save Anthropic key: {e}")
 
 def load_kite_creds():
     try:
@@ -1309,6 +1336,116 @@ CAP_TIER_BADGE = {
 LARGECAP_STOCKS = [s for s in POPULAR_STOCKS if get_cap_tier(s.replace('.NS','')) == 'LARGECAP']
 MIDCAP_STOCKS   = [s for s in POPULAR_STOCKS if get_cap_tier(s.replace('.NS','')) == 'MIDCAP']
 SMALLCAP_STOCKS = [s for s in POPULAR_STOCKS if get_cap_tier(s.replace('.NS','')) == 'SMALLCAP']
+
+# ─────────────────────────────────────────────────────────────
+#  SUPERTREND + PSAR HELPER FUNCTIONS
+#  Used by both SMA Weekly and Monthly Swing tabs
+# ─────────────────────────────────────────────────────────────
+
+def calc_supertrend(df, atr_period=7, multiplier=2.0):
+    import pandas as _pd
+    df = df.copy()
+    df['_hl']  = df['High'] - df['Low']
+    df['_hpc'] = (df['High'] - df['Close'].shift(1)).abs()
+    df['_lpc'] = (df['Low']  - df['Close'].shift(1)).abs()
+    df['_tr']  = df[['_hl','_hpc','_lpc']].max(axis=1)
+    df['_atr'] = df['_tr'].rolling(atr_period).mean()
+    df['_hl2'] = (df['High'] + df['Low']) / 2
+    st = [float('nan')] * len(df)
+    trend = [1] * len(df)
+    for i in range(atr_period, len(df)):
+        _av = df['_atr'].iloc[i]
+        if _pd.isna(_av): continue
+        ub = df['_hl2'].iloc[i] + multiplier * _av
+        lb = df['_hl2'].iloc[i] - multiplier * _av
+        if not _pd.isna(st[i-1]):
+            if trend[i-1] == -1: ub = min(ub, st[i-1])
+            if trend[i-1] == 1:  lb = max(lb, st[i-1])
+        cl = df['Close'].iloc[i]
+        if trend[i-1] == 1:
+            if cl < lb: trend[i]=-1; st[i]=ub
+            else:       trend[i]=1;  st[i]=lb
+        else:
+            if cl > ub: trend[i]=1;  st[i]=lb
+            else:       trend[i]=-1; st[i]=ub
+    df['ST_line']  = st
+    df['ST_trend'] = trend
+    df.drop(columns=['_hl','_hpc','_lpc','_tr','_hl2'], inplace=True, errors='ignore')
+    return df
+
+
+def calc_psar(df, step=0.02, max_af=0.20):
+    import pandas as _pd
+    n = len(df)
+    psar=[float('nan')]*n; bull=[True]*n; af=[step]*n; ep=[float('nan')]*n
+    psar[0]=float(df['Low'].iloc[0]); ep[0]=float(df['High'].iloc[0])
+    for i in range(1, n):
+        pp=psar[i-1]; pe=ep[i-1]; pa=af[i-1]; pb=bull[i-1]
+        hi=float(df['High'].iloc[i]); lo=float(df['Low'].iloc[i])
+        if _pd.isna(pp): pp=lo
+        if pb:
+            np2=pp+pa*(pe-pp)
+            if i>=2: np2=min(np2,float(df['Low'].iloc[i-1]),float(df['Low'].iloc[i-2]))
+            if lo<np2:
+                bull[i]=False; psar[i]=pe; ep[i]=lo; af[i]=step
+            else:
+                bull[i]=True; psar[i]=np2
+                if hi>pe: ep[i]=hi; af[i]=min(pa+step,max_af)
+                else:     ep[i]=pe; af[i]=pa
+        else:
+            np2=pp+pa*(pe-pp)
+            if i>=2: np2=max(np2,float(df['High'].iloc[i-1]),float(df['High'].iloc[i-2]))
+            if hi>np2:
+                bull[i]=True; psar[i]=pe; ep[i]=hi; af[i]=step
+            else:
+                bull[i]=False; psar[i]=np2
+                if lo<pe: ep[i]=lo; af[i]=min(pa+step,max_af)
+                else:     ep[i]=pe; af[i]=pa
+    df['PSAR']=[round(x,2) if not _pd.isna(x) else float('nan') for x in psar]
+    df['PSAR_bull']=bull
+    return df
+
+
+def get_st_psar(df, timeframe='daily'):
+    """
+    Get Supertrend + PSAR signals from OHLC dataframe.
+    timeframe: 'daily' or 'weekly'
+    Returns dict with st_bullish, st_fresh_flip, st_line, st_score,
+                       st_periods, psar, psar_bullish, psar_score
+    """
+    import pandas as _pd
+    ps = 0.01 if timeframe=='weekly' else 0.02
+    pm = 0.10 if timeframe=='weekly' else 0.20
+    out = {
+        'st_bullish':False,'st_fresh_flip':False,
+        'st_line':None,'st_score':0,'st_periods':0,
+        'psar':None,'psar_bullish':False,'psar_score':0,
+    }
+    try:
+        ds = calc_supertrend(df.copy(), 7, 2.0)
+        if len(ds)>=2:
+            sn=int(ds['ST_trend'].iloc[-1]); sp=int(ds['ST_trend'].iloc[-2])
+            sl=float(ds['ST_line'].iloc[-1])
+            out['st_bullish']=sn==1
+            out['st_fresh_flip']=sn==1 and sp==-1
+            out['st_line']=round(sl,2) if not _pd.isna(sl) else None
+            w=0
+            for i in range(len(ds)-1,-1,-1):
+                if int(ds['ST_trend'].iloc[i])==1: w+=1
+                else: break
+            out['st_periods']=w
+            out['st_score']=(15 if out['st_fresh_flip'] else 8 if out['st_bullish'] else -10)
+    except Exception: pass
+    try:
+        dp = calc_psar(df.copy(), step=ps, max_af=pm)
+        if len(dp)>=1:
+            pv=float(dp['PSAR'].iloc[-1]); pb=bool(dp['PSAR_bull'].iloc[-1])
+            cl=float(dp['Close'].iloc[-1])
+            out['psar']=round(pv,2) if not _pd.isna(pv) else None
+            out['psar_bullish']=pb and cl>pv
+            out['psar_score']=(8 if out['psar_bullish'] else -8)
+    except Exception: pass
+    return out
 
 # ── Sector map ────────────────────────────────────────────
 SECTOR_MAP = {
@@ -3636,6 +3773,55 @@ with st.sidebar:
 
 
     run_btn = st.button("▶  Scan Now", use_container_width=True, type="primary")
+
+    # ── Anthropic AI API Key ───────────────────────────────
+    st.markdown("<hr class='sb-section-divider'>", unsafe_allow_html=True)
+    st.markdown("<div class='sb-section-label'>🤖 AI Validation (Claude)</div>",
+                unsafe_allow_html=True)
+
+    _ant_key     = load_anthropic_key()
+    _ant_masked  = ('sk-ant-...'+_ant_key[-6:]) if len(_ant_key) > 10 else ''
+    _ant_status  = '🟢 Connected' if _ant_key else '🔴 Not set'
+    st.markdown(
+        f"<div style='font-size:11px;color:#64748b;margin-bottom:6px'>"
+        f"Status: <b>{_ant_status}</b>"
+        f"{f' ({_ant_masked})' if _ant_masked else ''}"
+        f"</div>",
+        unsafe_allow_html=True)
+
+    with st.expander("⚙️ Set Anthropic API Key", expanded=not bool(_ant_key)):
+        _new_ant_key = st.text_input(
+            "Anthropic API Key",
+            value=_ant_key,
+            type="password",
+            placeholder="sk-ant-api03-...",
+            key="ant_key_input",
+            help="Get your key from console.anthropic.com")
+        _ant_col1, _ant_col2 = st.columns(2)
+        with _ant_col1:
+            if st.button("💾 Save Key", key="save_ant_key",
+                         use_container_width=True):
+                if _new_ant_key.startswith('sk-ant-'):
+                    save_anthropic_key(_new_ant_key)
+                    st.session_state['anthropic_api_key'] = _new_ant_key
+                    st.success("✅ Saved!")
+                    st.rerun()
+                else:
+                    st.error("Key must start with sk-ant-")
+        with _ant_col2:
+            if st.button("🗑️ Clear", key="clear_ant_key",
+                         use_container_width=True):
+                st.session_state.pop('anthropic_api_key', None)
+                try:
+                    ANTHROPIC_CREDS_FILE.unlink(missing_ok=True)
+                except Exception:
+                    pass
+                st.rerun()
+        st.markdown(
+            "<div style='font-size:10px;color:#94a3b8;margin-top:4px'>"
+            "Key saved to ~/Downloads/anthropic_creds.json<br>"
+            "Get API key: console.anthropic.com → API Keys"
+            "</div>", unsafe_allow_html=True)
 
     # ── Kite API ──────────────────────────────────────────
     st.markdown("<hr class='sb-section-divider'>", unsafe_allow_html=True)
@@ -8220,9 +8406,117 @@ if _show_portfolio:
                 <div class='stat-sub'>{_sub}</div>
             </div>""", unsafe_allow_html=True)
 
+    # ── Manual Add Position ───────────────────────────
+    with st.expander("➕ Add Position Manually", expanded=False):
+        st.markdown(
+            "<div style='font-size:12px;color:#64748b;margin-bottom:12px'>"
+            "Add any stock manually — intraday, swing, delivery or just tracking"
+            "</div>", unsafe_allow_html=True)
+
+        _ma_c1, _ma_c2, _ma_c3 = st.columns(3)
+        with _ma_c1:
+            _ma_sym = st.text_input(
+                "Stock Symbol", placeholder="e.g. HINDZINC or ATHERENERG",
+                key="manual_add_sym",
+                help="NSE symbol without .NS")
+        with _ma_c2:
+            _ma_entry = st.number_input(
+                "Entry Price ₹", min_value=0.1, value=100.0,
+                step=0.5, format="%.2f", key="manual_add_entry")
+        with _ma_c3:
+            _ma_qty = st.number_input(
+                "Quantity (shares)", min_value=1, value=1,
+                step=1, key="manual_add_qty")
+
+        _ma_c4, _ma_c5, _ma_c6 = st.columns(3)
+        with _ma_c4:
+            _ma_sl = st.number_input(
+                "Stop Loss ₹", min_value=0.0, value=0.0,
+                step=0.5, format="%.2f", key="manual_add_sl",
+                help="Leave 0 if not set")
+        with _ma_c5:
+            _ma_t1 = st.number_input(
+                "Target T1 ₹", min_value=0.0, value=0.0,
+                step=0.5, format="%.2f", key="manual_add_t1",
+                help="Leave 0 if not set")
+        with _ma_c6:
+            _ma_t2 = st.number_input(
+                "Target T2 ₹", min_value=0.0, value=0.0,
+                step=0.5, format="%.2f", key="manual_add_t2",
+                help="Leave 0 if not set")
+
+        _ma_c7, _ma_c8, _ma_c9 = st.columns(3)
+        with _ma_c7:
+            _ma_type = st.selectbox(
+                "Trade Type",
+                ["Intraday", "SMA Weekly (3-7 days)",
+                 "Monthly Swing (3-5 weeks)", "Delivery (Long term)"],
+                key="manual_add_type")
+        with _ma_c8:
+            _ma_date = st.text_input(
+                "Entry Date", value=ist_now().strftime('%d %b %Y'),
+                key="manual_add_date",
+                help="When did you buy?")
+        with _ma_c9:
+            _ma_note = st.text_input(
+                "Notes (optional)", placeholder="e.g. Bought on breakout",
+                key="manual_add_note")
+
+        # Type → source mapping
+        _ma_src_map = {
+            "Intraday":                  "manual_intraday",
+            "SMA Weekly (3-7 days)":     "sma_weekly",
+            "Monthly Swing (3-5 weeks)": "monthly_swing",
+            "Delivery (Long term)":      "manual_delivery",
+        }
+
+        if st.button("➕ Add to Portfolio", key="manual_add_btn",
+                     use_container_width=True, type="primary"):
+            _ma_sym_clean = _ma_sym.strip().upper().replace('.NS','')
+            if not _ma_sym_clean:
+                st.error("❌ Please enter a stock symbol")
+            elif _ma_entry <= 0:
+                st.error("❌ Entry price must be greater than 0")
+            elif _ma_qty < 1:
+                st.error("❌ Quantity must be at least 1")
+            else:
+                _ma_port = load_portfolio()
+                _ma_inv  = round(_ma_entry * _ma_qty, 2)
+                _ma_port.append({
+                    'symbol':      _ma_sym_clean,
+                    'status':      'OPEN',
+                    'entry':       round(_ma_entry, 2),
+                    'qty':         int(_ma_qty),
+                    'stop_loss':   round(_ma_sl, 2),
+                    't1':          round(_ma_t1, 2),
+                    't2':          round(_ma_t2, 2),
+                    't3':          0,
+                    't4':          0,
+                    'investment':  _ma_inv,
+                    'actual_cost': _ma_inv,
+                    'timeframe':   _ma_type,
+                    'date':        _ma_date,
+                    'entry_time':  ist_now().strftime('%H:%M'),
+                    'nifty_state': 'MANUAL',
+                    'vix_level':   'MANUAL',
+                    'score':       0,
+                    'verdict':     'Manual Entry',
+                    'vol_ratio':   0,
+                    'source':      _ma_src_map.get(_ma_type, 'manual'),
+                    'exit_reason': '',
+                    'notes':       _ma_note.strip(),
+                })
+                save_portfolio(_ma_port)
+                st.session_state['paper_portfolio'] = _ma_port
+                st.session_state.pop('pf_live_prices', None)  # force price refresh
+                st.success(
+                    f"✅ Added {_ma_sym_clean} · {int(_ma_qty)} shares @ ₹{_ma_entry:,.2f} · "
+                    f"Investment ₹{_ma_inv:,.0f} · {_ma_type}")
+                st.rerun()
+
     st.markdown("<div class='section-header'>📋 Open Positions</div>", unsafe_allow_html=True)
 
-    for p in open_pos:
+    for _pf_idx, p in enumerate(open_pos):
         sym_c  = p.get('symbol', '')
         entry  = _f(p.get('entry', 0))
         qty    = int(_f(p.get('qty', 0)))
@@ -8230,6 +8524,84 @@ if _show_portfolio:
         t1     = _f(p.get('t1', 0)); t2 = _f(p.get('t2', 0))
         t3     = _f(p.get('t3', 0)); t4 = _f(p.get('t4', 0))
         actual = _f(p.get('actual_cost', _f(p.get('investment',0))))
+
+        # ── Detect if this is a swing position ───────────
+        _is_swing   = p.get('source','') in ('monthly_swing','sma_weekly')
+        _is_monthly = p.get('source','') == 'monthly_swing'
+        _src_lbl    = ('📅 Monthly Swing' if _is_monthly
+                       else '📈 SMA Weekly' if p.get('source','')=='sma_weekly'
+                       else '⚡ Intraday' if p.get('source','').startswith('manual_intraday')
+                       else '📦 Delivery' if p.get('source','').startswith('manual_delivery')
+                       else '🏷️ Manual')
+
+        # ── Fetch PSAR for swing positions ────────────────
+        _sp_psar   = None
+        _sp_psar_b = False
+        _sp_signal = ''
+        _sp_guidance = ''
+        _sp_psar_clr = '#64748b'
+        _sp_psar_bg  = '#f8fafc'
+        _sp_psar_bdr = '#e2e8f0'
+        _t1_hit      = False
+
+        if _is_swing:
+            try:
+                import yfinance as _yf_pf
+                _sp_ticker = _yf_pf.Ticker(sym_c + '.NS')
+                _sp_df_d = _sp_ticker.history(period='5d', interval='1d',
+                                              auto_adjust=True, actions=False)
+                if _sp_df_d is not None and len(_sp_df_d) > 0:
+                    _sp_df_d.columns = [c.split(' ')[0] if ' ' in str(c)
+                                        else c for c in _sp_df_d.columns]
+                    _sp_live = round(float(_sp_df_d['Close'].iloc[-1]), 2)
+                else:
+                    _sp_live = None
+
+                if _is_monthly:
+                    _sp_wdf = _sp_ticker.history(period='1y', interval='1wk',
+                                                 auto_adjust=True, actions=False)
+                    if _sp_wdf is not None and len(_sp_wdf) >= 10:
+                        _sp_wdf.columns = [c.split(' ')[0] if ' ' in str(c)
+                                           else c for c in _sp_wdf.columns]
+                        _sp_wdf  = _sp_wdf[['Open','High','Low','Close','Volume']].dropna()
+                        _sp_dfps = calc_psar(_sp_wdf.copy(), step=0.01, max_af=0.10)
+                        _sp_psar = round(float(_sp_dfps['PSAR'].iloc[-1]), 2)
+                        _sp_psar_b = bool(_sp_dfps['PSAR_bull'].iloc[-1])
+                else:
+                    _sp_ddf = _sp_ticker.history(period='1y', interval='1d',
+                                                 auto_adjust=True, actions=False)
+                    if _sp_ddf is not None and len(_sp_ddf) >= 20:
+                        _sp_ddf.columns = [c.split(' ')[0] if ' ' in str(c)
+                                           else c for c in _sp_ddf.columns]
+                        _sp_ddf  = _sp_ddf[['Open','High','Low','Close','Volume']].dropna()
+                        _sp_dfps = calc_psar(_sp_ddf.copy(), step=0.02, max_af=0.20)
+                        _sp_psar = round(float(_sp_dfps['PSAR'].iloc[-1]), 2)
+                        _sp_psar_b = bool(_sp_dfps['PSAR_bull'].iloc[-1])
+
+                if _sp_psar and _sp_live:
+                    _sp_psar_b = _sp_psar_b and _sp_live > _sp_psar
+                    _t1_hit    = _sp_live >= t1 if t1 > 0 else False
+                    _psar_gap  = round((_sp_live - _sp_psar) / _sp_live * 100, 1)
+                    _psar_type = 'Weekly' if _is_monthly else 'Daily'
+                    _check_freq= 'every Friday' if _is_monthly else 'every morning'
+
+                    if not _t1_hit:
+                        _sp_psar_clr = '#1d4ed8'; _sp_psar_bg='#eff6ff'; _sp_psar_bdr='#93c5fd'
+                        _sp_signal   = f'⏳ Waiting for T1 ₹{t1:,.2f}'
+                        _sp_guidance = (f'Needs +{round((t1-_sp_live)/_sp_live*100,1)}% to hit T1 · '
+                                        f'Use original SL ₹{sl:,.2f} · PSAR activates after T1')
+                    elif _sp_psar_b:
+                        _sp_psar_clr = '#15803d'; _sp_psar_bg='#f0fdf4'; _sp_psar_bdr='#86efac'
+                        _sp_signal   = '✅ HOLD — Above PSAR'
+                        _sp_guidance = (f'T1 ✅ hit · Trail SL → ₹{_sp_psar:,.2f} · '
+                                        f'Update Zerodha SL · Check {_check_freq}')
+                    else:
+                        _sp_psar_clr = '#dc2626'; _sp_psar_bg='#fef2f2'; _sp_psar_bdr='#fca5a5'
+                        _sp_signal   = '🔴 EXIT — PSAR crossed after T1'
+                        _sp_guidance = (f'T1 ✅ hit earlier · Below PSAR now · '
+                                        f'Exit to lock profit · PSAR = ₹{_sp_psar:,.2f}')
+            except Exception:
+                pass
 
         # Use cached live price
         cur        = _pf_prices.get(sym_c, entry)
@@ -8239,11 +8611,8 @@ if _show_portfolio:
         pl_sign    = "+" if unreal >= 0 else ""
 
         # ── Auto-sell session keys ──
-        _as_key_pct    = f"autosell_pct_{sym_c}"
-        _as_key_type   = f"autosell_type_{sym_c}"
-        _as_key_enabled= f"autosell_on_{sym_c}"
-
-        # Defaults: take profit at T1 % gain, stop at SL %
+        _as_key_pct     = f"autosell_pct_{sym_c}_{_pf_idx}"
+        _as_key_enabled = f"autosell_on_{sym_c}_{_pf_idx}"
         _default_tp_pct = 2.0
         _default_sl_pct = 1.0
         _as_tp_pct  = max(0.1, float(st.session_state.get(_as_key_pct + '_tp', _default_tp_pct)))
@@ -8256,11 +8625,9 @@ if _show_portfolio:
         if _as_enabled and cur > 0 and entry > 0:
             _cur_pct = (cur - entry) / entry * 100
             if _cur_pct >= _as_tp_pct:
-                _auto_triggered = True
-                _auto_reason    = 'T1_HIT'
+                _auto_triggered = True; _auto_reason = 'T1_HIT'
             elif _cur_pct <= -_as_sl_pct:
-                _auto_triggered = True
-                _auto_reason    = 'SL_HIT'
+                _auto_triggered = True; _auto_reason = 'SL_HIT'
 
         if _auto_triggered:
             for _p in port:
@@ -8277,7 +8644,7 @@ if _show_portfolio:
                        f"P&L: {pl_sign}₹{unreal:,.2f} ({pl_sign}{unreal_pct:.2f}%)")
             st.rerun()
 
-        # ── SL hit urgent banner ───────────────────────────
+        # ── SL hit banner ─────────────────────────────────
         _pf_sl_hit = sl > 0 and cur <= sl
         if _pf_sl_hit:
             st.markdown(
@@ -8290,85 +8657,148 @@ if _show_portfolio:
                 f"Loss: ₹{abs(unreal):,.0f} · Click Square Off below</div>"
                 f"</div>", unsafe_allow_html=True)
 
-        # ── Position card ──
+        # ── Progress bar ──────────────────────────────────
+        _t2_pct  = round((t2 - entry) / entry * 100, 2) if entry > 0 and t2 > 0 else 2.0
+        _sl_pct  = round((entry - sl)  / entry * 100, 2) if entry > 0 and sl > 0 else 0.5
+        _cur_pct2= round((cur - entry) / entry * 100, 2) if entry > 0 else 0
+        _bar_rng = (_t2_pct + _sl_pct) or 1
+        _bar_pct = min(100, max(0, int((_cur_pct2 + _sl_pct) / _bar_rng * 100)))
+        _bar_clr = "#16a34a" if _cur_pct2 >= 0 else "#dc2626"
+        _au_badge= ("<span style='font-size:10px;font-weight:700;color:#7c3aed;"
+                    "background:#f5f3ff;border-radius:20px;padding:2px 8px'>AUTO</span>"
+                    if _as_enabled else "")
+
+        # ── Target boxes ──────────────────────────────────
+        _sl_hit2 = cur <= sl and sl > 0
+        _t_html  = (
+            "<div style='background:" + ("#fef2f2" if _sl_hit2 else "#fff5f5") +
+            ";border-radius:8px;padding:8px 12px;flex:1;min-width:72px;text-align:center'>"
+            "<div style='font-size:9px;color:#dc2626;font-weight:700'>SL</div>"
+            "<div style='font-size:13px;font-weight:800;color:#dc2626;font-family:JetBrains Mono'>₹" +
+            "{:,.2f}".format(sl) + "</div>"
+            "<div style='font-size:9px;color:#dc2626'>" +
+            ("🚨HIT" if _sl_hit2 else f"-{_sl_pct:.1f}%") + "</div></div>"
+        ) if sl > 0 else ""
+
+        for _tv, _tlbl in [(t1,"T1"),(t2,"T2"),(t3,"T3"),(t4,"T4")]:
+            if _tv <= 0: continue
+            _thit = cur >= _tv
+            _tbg  = "#dcfce7" if _thit else "#f0fdf4"
+            _tdsp = "✅HIT" if _thit else f"+{round((_tv-entry)/entry*100,1)}%"
+            _t_html += (
+                "<div style='background:" + _tbg +
+                ";border-radius:8px;padding:8px 12px;flex:1;min-width:72px;text-align:center'>"
+                "<div style='font-size:9px;color:#15803d;font-weight:700'>" + _tlbl + "</div>"
+                "<div style='font-size:13px;font-weight:800;color:#15803d;font-family:JetBrains Mono'>₹" +
+                "{:,.2f}".format(_tv) + "</div>"
+                "<div style='font-size:9px;color:#15803d'>" + _tdsp + "</div></div>"
+            )
+
+        # ── Build card border colour ───────────────────────
+        _card_border = ('#fca5a5' if _pf_sl_hit
+                        else _sp_psar_bdr if _is_swing
+                        else '#e8ecf3')
+
+        # ── Pre-built strings ─────────────────────────────
+        _notes_str  = f" · 📝 {p.get('notes','')}" if p.get('notes') else ""
+        _manual_str = " · 🏷️ Manual" if p.get('source','').startswith('manual') else ""
+        _detail_line= (f"{qty} shares · Entry ₹{entry:,.2f} · "
+                       f"{p.get('timeframe','INTRADAY')} · {p.get('date','')}"
+                       f"{_notes_str}{_manual_str}")
+        _pnl_line   = (f"{pl_sign}₹{unreal:,.0f} "
+                       f"<span style='font-size:13px;font-weight:700'>"
+                       f"({pl_sign}{unreal_pct:.2f}%)</span>")
+        _bar_html   = (f"<div style='background:#f1f5f9;border-radius:4px;"
+                       f"height:8px;overflow:hidden'>"
+                       f"<div style='background:{_bar_clr};height:8px;border-radius:4px;"
+                       f"width:{_bar_pct}%;transition:width 0.4s'></div></div>")
+
+        # ── PSAR strip for swing ───────────────────────────
+        if _is_swing and _sp_psar:
+            _psar_val_str   = f"₹{_sp_psar:,.2f}"
+            _psar_lbl_sfx   = "(T1 ✅ active)" if _t1_hit else "(activates after T1)"
+            _psar_type_lbl  = 'Weekly PSAR' if _is_monthly else 'Daily PSAR'
+            _psar_gap_show  = f"{round((_sp_live-_sp_psar)/_sp_live*100,1):+.1f}% from price" if _t1_hit and _sp_live else ""
+            _psar_strip = (
+                f"<div style='background:{_sp_psar_bg};border:1px solid {_sp_psar_bdr};"
+                f"border-radius:8px;padding:10px 14px;margin-top:10px;"
+                f"display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px'>"
+                f"<div>"
+                f"<div style='font-size:9px;font-weight:700;color:{_sp_psar_clr};"
+                f"letter-spacing:1px'>📍 {_psar_type_lbl.upper()} — TRAILING SL {_psar_lbl_sfx}</div>"
+                f"<div style='font-size:17px;font-weight:800;color:{_sp_psar_clr};"
+                f"font-family:JetBrains Mono;margin-top:2px'>"
+                f"{_psar_val_str} "
+                f"<span style='font-size:10px;font-weight:600;color:{_sp_psar_clr}'>"
+                f"{_psar_gap_show}</span></div>"
+                f"<div style='font-size:10px;color:{_sp_psar_clr};margin-top:3px'>{_sp_guidance}</div>"
+                f"</div>"
+                f"<div style='font-size:12px;font-weight:800;color:{_sp_psar_clr};"
+                f"padding:7px 14px;background:white;border-radius:8px;"
+                f"border:2px solid {_sp_psar_bdr};white-space:nowrap'>{_sp_signal}</div>"
+                f"</div>"
+            )
+        else:
+            _psar_strip = ""
+
+        # ── Source badge ──────────────────────────────────
+        _src_badge_clr = ('#7c3aed' if _is_monthly else
+                          '#1d4ed8' if _is_swing else '#16a34a')
+        _src_badge_bg  = ('#f5f3ff' if _is_monthly else
+                          '#eff6ff' if _is_swing else '#dcfce7')
+
+        _h = (
+            f"<div style='background:#ffffff;border:1.5px solid {_card_border};"
+            f"border-radius:16px;padding:18px 20px;margin-bottom:14px'>"
+
+            # ── Header row ──
+            f"<div style='display:flex;justify-content:space-between;"
+            f"align-items:flex-start;flex-wrap:wrap;gap:8px'>"
+            f"<div>"
+            f"<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'>"
+            f"<span style='font-size:19px;font-weight:800;color:#1a2035'>{sym_c}</span>"
+            f"<span style='background:{_src_badge_bg};color:{_src_badge_clr};font-size:10px;"
+            f"font-weight:700;border-radius:4px;padding:2px 8px'>{_src_lbl}</span>"
+            f"<span style='font-size:10px;font-weight:700;color:#16a34a;background:#dcfce7;"
+            f"border-radius:20px;padding:2px 8px'>OPEN</span>"
+            f"{_au_badge}</div>"
+            f"<div style='font-size:11px;color:#64748b;margin-top:3px'>{_detail_line}</div>"
+            f"</div>"
+            f"<div style='text-align:right'>"
+            f"<div style='font-size:11px;color:#94a3b8'>Live</div>"
+            f"<div style='font-size:22px;font-weight:800;color:#1a2035;"
+            f"font-family:JetBrains Mono'>₹{cur:,.2f}</div>"
+            f"<div style='font-size:15px;font-weight:800;color:{pl_color}'>{_pnl_line}</div>"
+            f"</div></div>"
+
+            # ── Progress bar ──
+            f"<div style='margin:10px 0 4px'>"
+            f"<div style='display:flex;justify-content:space-between;"
+            f"font-size:10px;color:#94a3b8;margin-bottom:3px'>"
+            f"<span>SL -{_sl_pct:.2f}%</span>"
+            f"<span style='color:{_bar_clr};font-weight:700'>{pl_sign}{_cur_pct2:.2f}% now</span>"
+            f"<span>T2 +{_t2_pct:.2f}%</span>"
+            f"</div>{_bar_html}</div>"
+
+            # ── Target boxes ──
+            f"<div style='display:flex;gap:6px;margin-top:10px;flex-wrap:wrap'>{_t_html}</div>"
+
+            # ── PSAR strip (swing only) ──
+            f"{_psar_strip}"
+
+            # ── Footer note ──
+            f"<div style='margin-top:8px;padding:5px 10px;background:#fffbeb;"
+            f"border-radius:6px;font-size:10px;color:#92400e'>"
+            f"{'Check every Friday · Trail SL to PSAR after T1' if _is_monthly else 'Check every morning · Trail SL after T1' if _is_swing else 'Square off before 3:20 PM IST'}"
+            f"</div>"
+            f"</div>"
+        )
+        st.markdown(_h, unsafe_allow_html=True)
+
         with st.container():
-            _h1, _h2 = st.columns([4, 1])
-
-            with _h1:
-                _t2_pct  = round((t2 - entry) / entry * 100, 2) if entry > 0 and t2 > 0 else 2.0
-                _sl_pct  = round((entry - sl) / entry * 100, 2) if entry > 0 and sl > 0 else 0.5
-                _cur_pct = round((cur - entry) / entry * 100, 2) if entry > 0 else 0
-                _bar_rng = (_t2_pct + _sl_pct) or 1
-                _bar_pct = min(100, max(0, int((_cur_pct + _sl_pct) / _bar_rng * 100)))
-                _bar_clr = "#16a34a" if _cur_pct >= 0 else "#dc2626"
-                _au_badge= ("<span style='font-size:10px;font-weight:700;color:#7c3aed;"
-                            "background:#f5f3ff;border-radius:20px;padding:2px 8px'>AUTO</span>"
-                            if _as_enabled else "")
-
-                # Build target boxes
-                _sl_hit = cur <= sl and sl > 0
-                _t_html = (
-                    "<div style='background:" + ("#fef2f2" if _sl_hit else "#fff5f5") +
-                    ";border-radius:8px;padding:8px 12px;flex:1;min-width:80px;text-align:center'>"
-                    "<div style='font-size:9px;color:#dc2626;font-weight:700'>SL</div>"
-                    "<div style='font-size:13px;font-weight:800;color:#dc2626;font-family:JetBrains Mono'>₹" +
-                    "{:,.2f}".format(sl) + "</div>"
-                    "<div style='font-size:9px;color:#dc2626'>" +
-                    ("HIT" if _sl_hit else "-{:.1f}%".format(_sl_pct)) + "</div></div>"
-                )
-                for _tv, _tlbl in [(t1,"T1"),(t2,"T2"),(t3,"T3"),(t4,"T4")]:
-                    if _tv <= 0:
-                        continue
-                    _thit = cur >= _tv
-                    _tbg  = "#dcfce7" if _thit else "#f0fdf4"
-                    _tdsp = "HIT" if _thit else "+{:.1f}%".format(round((_tv-entry)/entry*100,1))
-                    _t_html += (
-                        "<div style='background:" + _tbg +
-                        ";border-radius:8px;padding:8px 12px;flex:1;min-width:80px;text-align:center'>"
-                        "<div style='font-size:9px;color:#15803d;font-weight:700'>" + _tlbl + "</div>"
-                        "<div style='font-size:13px;font-weight:800;color:#15803d;font-family:JetBrains Mono'>₹" +
-                        "{:,.2f}".format(_tv) + "</div>"
-                        "<div style='font-size:9px;color:#15803d'>" + _tdsp + "</div></div>"
-                    )
-
-                _h = (
-                    "<div class='port-card'>"
-                    "<div style='display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:8px'>"
-                    "<div><div style='display:flex;align-items:center;gap:8px'>"
-                    "<span style='font-size:18px;font-weight:800;color:#1a2035'>" + str(sym_c) + "</span>"
-                    "<span style='font-size:10px;font-weight:700;color:#16a34a;background:#dcfce7;"
-                    "border-radius:20px;padding:2px 8px'>OPEN</span>" + _au_badge + "</div>"
-                    "<div style='font-size:12px;color:#64748b;margin-top:3px'>" +
-                    str(qty) + " shares · Entry ₹" + "{:,.2f}".format(entry) +
-                    " · " + str(p.get("timeframe","INTRADAY")) +
-                    " · " + str(p.get("date","")) + "</div></div>"
-                    "<div style='text-align:right'>"
-                    "<div style='font-size:11px;color:#94a3b8'>Live</div>"
-                    "<div style='font-size:22px;font-weight:800;color:#1a2035;font-family:JetBrains Mono'>₹" +
-                    "{:,.2f}".format(cur) + "</div>"
-                    "<div style='font-size:16px;font-weight:800;color:" + pl_color + "'>" +
-                    pl_sign + "₹" + "{:,.0f}".format(unreal) +
-                    "<span style='font-size:13px;font-weight:700'> (" + pl_sign +
-                    "{:.2f}%)</span></div></div></div>".format(unreal_pct) +
-                    "<div style='margin:12px 0 4px'>"
-                    "<div style='display:flex;justify-content:space-between;font-size:10px;color:#94a3b8;margin-bottom:3px'>"
-                    "<span>SL -" + "{:.2f}%".format(_sl_pct) + "</span>"
-                    "<span style='color:" + _bar_clr + ";font-weight:700'>" + pl_sign + "{:.2f}% now</span>".format(_cur_pct) +
-                    "<span>T2 +" + "{:.2f}%".format(_t2_pct) + "</span></div>"
-                    "<div style='background:#f1f5f9;border-radius:4px;height:8px;overflow:hidden'>"
-                    "<div style='background:" + _bar_clr + ";height:8px;border-radius:4px;width:" +
-                    str(_bar_pct) + "%;transition:width 0.4s'></div></div></div>"
-                    "<div style='display:flex;gap:8px;margin-top:12px;flex-wrap:wrap'>" + _t_html + "</div>"
-                    "<div style='margin-top:10px;padding:6px 10px;background:#fffbeb;"
-                    "border-radius:6px;font-size:11px;color:#92400e'>"
-                    "Square off before 3:20 PM IST</div></div>"
-                )
-                st.markdown(_h, unsafe_allow_html=True)
-
-
-            with _h2:
-                # Manual square off
-                if st.button(f"✅ Square Off", key=f"sq_{sym_c}_{p.get('date','')}",
+            _hh_col1, _hh_col2 = st.columns([4, 1])
+            with _hh_col2:
+                if st.button(f"✅ Square Off", key=f"sq_{sym_c}_{_pf_idx}",
                              use_container_width=True):
                     for _p in port:
                         if _p.get('symbol') == sym_c and _p.get('status') == 'OPEN':
@@ -8382,62 +8812,37 @@ if _show_portfolio:
                     st.session_state['paper_portfolio'] = port
                     st.success(f"✅ {sym_c} @ ₹{cur:,.2f} · {pl_sign}₹{unreal:,.0f} ({pl_sign}{unreal_pct:.2f}%)")
                     st.rerun()
-
                 st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
-
-                # ── Auto-sell toggle ──
-                _new_as = st.toggle(
-                    "🤖 Auto sell",
-                    value=_as_enabled,
-                    key=f"as_toggle_{sym_c}",
-                    help="Auto square off when TP% or SL% is hit on next Refresh P&L"
-                )
+                _new_as = st.toggle("🤖 Auto sell", value=_as_enabled,
+                                    key=f"as_toggle_{sym_c}_{_pf_idx}",
+                                    help="Auto square off when TP% or SL% is hit")
                 st.session_state[_as_key_enabled] = _new_as
 
-            # ── Auto-sell settings (shown when enabled) ──
-            if st.session_state.get(_as_key_enabled, False):
-                _asp1, _asp2 = st.columns(2)
+            with _hh_col1:
+                if st.session_state.get(_as_key_enabled, False):
+                    _asp1, _asp2 = st.columns(2)
+                    with _asp1:
+                        _new_tp = st.number_input(
+                            f"Take Profit %", min_value=0.1, max_value=10.0,
+                            value=float(max(0.1, round(_as_tp_pct, 2))),
+                            step=0.05, format="%.2f", key=f"as_tp_{sym_c}_{_pf_idx}")
+                        st.session_state[_as_key_pct + '_tp'] = _new_tp
+                        st.markdown(
+                            f"<div style='font-size:11px;color:#7c3aed;margin-top:-8px'>"
+                            f"Sell at ₹{round(entry*(1+_new_tp/100),2):,.2f}</div>",
+                            unsafe_allow_html=True)
+                    with _asp2:
+                        _new_sl2 = st.number_input(
+                            f"Stop Loss %", min_value=0.1, max_value=5.0,
+                            value=float(max(0.1, round(_as_sl_pct, 2))),
+                            step=0.05, format="%.2f", key=f"as_sl_{sym_c}_{_pf_idx}")
+                        st.session_state[_as_key_pct + '_sl'] = _new_sl2
+                        st.markdown(
+                            f"<div style='font-size:11px;color:#dc2626;margin-top:-8px'>"
+                            f"Sell at ₹{round(entry*(1-_new_sl2/100),2):,.2f}</div>",
+                            unsafe_allow_html=True)
 
-                with _asp1:
-                    _new_tp = st.number_input(
-                        f"Take Profit % (T1 default: +{_default_tp_pct:.2f}%)",
-                        min_value=0.1, max_value=10.0,
-                        value=float(max(0.1, round(_as_tp_pct, 2))),
-                        step=0.05, format="%.2f",
-                        key=f"as_tp_{sym_c}",
-                    )
-                    st.session_state[_as_key_pct + '_tp'] = _new_tp
-                    _tp_price = round(entry * (1 + _new_tp / 100), 2)
-                    st.markdown(
-                        f"<div style='font-size:11px;color:#7c3aed;margin-top:-8px'>"
-                        f"Sell at ₹{_tp_price:,.2f} (+{_new_tp:.2f}%)</div>",
-                        unsafe_allow_html=True)
 
-                with _asp2:
-                    _new_sl = st.number_input(
-                        f"Stop Loss % (SL default: -{_default_sl_pct:.2f}%)",
-                        min_value=0.1, max_value=5.0,
-                        value=float(max(0.1, round(_as_sl_pct, 2))),
-                        step=0.05, format="%.2f",
-                        key=f"as_sl_{sym_c}",
-                    )
-                    st.session_state[_as_key_pct + '_sl'] = _new_sl
-                    _sl_auto_price = round(entry * (1 - _new_sl / 100), 2)
-                    st.markdown(
-                        f"<div style='font-size:11px;color:#dc2626;margin-top:-8px'>"
-                        f"Sell at ₹{_sl_auto_price:,.2f} (-{_new_sl:.2f}%)</div>",
-                        unsafe_allow_html=True)
-
-                _cur_pct_as = round((cur - entry) / entry * 100, 2) if entry > 0 else 0
-                _status_clr = "#16a34a" if _cur_pct_as >= 0 else "#dc2626"
-                st.markdown(
-                    f"<div style='background:#f5f3ff;border:1px solid #c4b5fd;"
-                    f"border-radius:8px;padding:8px 14px;margin-top:4px;font-size:11px;color:#7c3aed'>"
-                    f"⚡ Active · Current P&L: "
-                    f"<b style='color:{_status_clr}'>{'+' if _cur_pct_as >= 0 else ''}{_cur_pct_as:.2f}%</b>"
-                    f" · Triggers on next <b>🔄 Refresh P&L</b>"
-                    f"</div>",
-                    unsafe_allow_html=True)
     # Closed positions
     if closed_pos:
         st.markdown("<div class='section-header'>📁 Closed / Squared Off</div>", unsafe_allow_html=True)
@@ -8985,9 +9390,6 @@ if _show_smaweekly:
                     continue
 
                 # Weekly ATR targets — correct for 3-7 day hold
-                # T1 = 0.5× weekly ATR (+3-5%)  realistic first target
-                # T2 = 1.0× weekly ATR (+6-10%) good trade
-                # T3 = 1.5× weekly ATR (+9-15%) stretch
                 t1     = round(entry + 0.5 * atr, 2)
                 t2     = round(entry + 1.0 * atr, 2)
                 t3     = round(entry + 1.5 * atr, 2)
@@ -8997,6 +9399,21 @@ if _show_smaweekly:
                 rr_t2  = round((t2 - entry) / risk_d, 1)
                 wchg   = round((close - float(df.iloc[-6]['Close'])) / float(df.iloc[-6]['Close']) * 100, 2) if len(df) >= 6 else 0.0
                 sma20_sl = round((sma20 - float(df['SMA20'].iloc[-5])) / float(df['SMA20'].iloc[-5]) * 100, 3) if float(df['SMA20'].iloc[-5]) > 0 else 0
+
+                # ── PSAR (daily, step=0.02, max=0.20) ────
+                # Trailing SL for 3-7 day hold
+                # After T1 hit → move SL to PSAR level
+                _sw_psar_val     = None
+                _sw_psar_bullish = False
+                try:
+                    _df_sw_ps = calc_psar(df.copy(), step=0.02, max_af=0.20)
+                    if len(_df_sw_ps) >= 1:
+                        _spv = float(_df_sw_ps['PSAR'].iloc[-1])
+                        _spb = bool(_df_sw_ps['PSAR_bull'].iloc[-1])
+                        _sw_psar_val     = round(_spv, 2)
+                        _sw_psar_bullish = _spb and close > _spv
+                except Exception:
+                    pass
 
                 # ── Daily Liquidity check ─────────────────
                 # For daily chart: use real daily volume (not estimated)
@@ -9047,6 +9464,8 @@ if _show_smaweekly:
                     'hh': _hh, 'hl': _hl,
                     'pct_above_sma50': round(pct_above_sma50, 1),
                     'extended': _extended,
+                    'psar':         _sw_psar_val,
+                    'psar_bullish': _sw_psar_bullish,
                     'entry': round(entry,2), 'sl': sl,
                     't1': t1, 't2': t2, 't3': t3, 'qty': qty, 'inv': inv,
                     'risk_d': round(risk_d,2), 'rr_t1': rr_t1, 'rr_t2': rr_t2,
@@ -9143,11 +9562,174 @@ if _show_smaweekly:
         else:
             _sw_filtered = _sw_results
 
-        # Summary bar
-        st.markdown(
-            f"<div style='font-size:12px;color:#64748b;margin-bottom:12px'>"
-            f"📈 {len(_sw_filtered)} signals shown · Scanned {_sw_scantime}</div>",
-            unsafe_allow_html=True)
+
+        # ── CSV Export — SMA Weekly ────────────────────
+        def _sw_to_csv(results):
+            import csv, io
+            _buf = io.StringIO()
+            _cols = [
+                'Symbol','Score','Rank_Score','Signal_Type','Signal_Label',
+                'Entry','SMA20','SMA50','ATR','ATR_Label',
+                'RSI','Vol_Ratio','Trend_Days','SMA20_Slope',
+                'HH','HL','Pct_Above_SMA20','Pct_Above_SMA50','Extended',
+                'Stop_Loss','T1','T2','T3',
+                'Qty','Investment','RR_T1','RR_T2',
+                'Liquidity','Liq_Turnover','Cap_Tier',
+                'Week_Change','PSAR','PSAR_Bullish','Scan_Date',
+            ]
+            _w = csv.DictWriter(_buf, fieldnames=_cols, extrasaction='ignore')
+            _w.writeheader()
+            for r in results:
+                _w.writerow({
+                    'Symbol':          r.get('symbol',''),
+                    'Score':           r.get('score',0),
+                    'Rank_Score':      round(r.get('_rank_score',0),1),
+                    'Signal_Type':     r.get('signal_type',''),
+                    'Signal_Label':    r.get('signal_label',''),
+                    'Entry':           r.get('entry',0),
+                    'SMA20':           r.get('sma20',0),
+                    'SMA50':           r.get('sma50',0),
+                    'ATR':             r.get('atr',0),
+                    'ATR_Label':       r.get('atr_label',''),
+                    'RSI':             r.get('rsi',0),
+                    'Vol_Ratio':       r.get('vol_ratio',0),
+                    'Trend_Days':      r.get('trend_days',0),
+                    'SMA20_Slope':     r.get('sma20_slope',0),
+                    'HH':              r.get('hh',False),
+                    'HL':              r.get('hl',False),
+                    'Pct_Above_SMA20': r.get('pct_above20',0),
+                    'Pct_Above_SMA50': r.get('pct_above50',0),
+                    'Extended':        r.get('extended',False),
+                    'Stop_Loss':       r.get('sl',0),
+                    'T1':              r.get('t1',0),
+                    'T2':              r.get('t2',0),
+                    'T3':              r.get('t3',0),
+                    'Qty':             r.get('qty',0),
+                    'Investment':      r.get('inv',0),
+                    'RR_T1':           r.get('rr_t1',0),
+                    'RR_T2':           r.get('rr_t2',0),
+                    'Liquidity':       r.get('liq_grade',''),
+                    'Liq_Turnover':    r.get('liq_turn',''),
+                    'Cap_Tier':        r.get('cap_tier',''),
+                    'Week_Change':     r.get('week_chg',0),
+                    'PSAR':            r.get('psar',''),
+                    'PSAR_Bullish':    r.get('psar_bullish',False),
+                    'Scan_Date':       _sw_scantime,
+                })
+            return _buf.getvalue().encode('utf-8')
+
+        # Summary bar with CSV button
+        _sw_hdr1, _sw_hdr2 = st.columns([4, 1])
+        with _sw_hdr1:
+            st.markdown(
+                f"<div style='font-size:12px;color:#64748b;margin-bottom:12px'>"
+                f"📈 {len(_sw_filtered)} signals shown · Scanned {_sw_scantime}</div>",
+                unsafe_allow_html=True)
+        with _sw_hdr2:
+            _sw_csv_fname = f"sma_weekly_{ist_now().strftime('%d%b%Y')}.csv"
+            st.download_button(
+                label="📥 Download CSV",
+                data=_sw_to_csv(_sw_filtered),
+                file_name=_sw_csv_fname,
+                mime="text/csv",
+                use_container_width=True,
+                help=f"Download all {len(_sw_filtered)} signals as CSV"
+            )
+
+        # ── Batch AI (SMA Weekly) ─────────────────
+        _sw_batch_key = 'sw_batch_ai_btn'
+        _sw_batch_res = 'sw_batch_ai_result'
+        _sw_batch_tag = 'sw_batch_ai_tags'
+        if st.button(
+            f'🤖 AI Analyse All {len(_sw_filtered)} Stocks — Weekly Portfolio Recommendation',
+            key=_sw_batch_key, use_container_width=True):
+            with st.spinner('🤖 Analysing weekly stocks...'):
+                try:
+                    import requests as _sbr, json as _sbj
+                    _ant_k2 = load_anthropic_key()
+                    if not _ant_k2:
+                        st.error("❌ Anthropic API key not set. Go to sidebar → 🤖 AI Validation → Set Anthropic API Key")
+                        raise Exception("API key not configured")
+                    _sw_sum = []
+                    for _si,_ss in enumerate(_sw_filtered[:15],1):
+                        _sw_sum.append(
+                            f'STOCK {_si}: {_ss["symbol"]} Score={_ss.get("score",0)} '
+                            f'Entry=Rs{_ss.get("entry",0):.2f} RSI={_ss.get("rsi",0):.1f} '
+                            f'Vol={_ss.get("vol_ratio",0):.1f}x Trend={_ss.get("trend_days",0)}d '
+                            f'Signal={_ss.get("signal_label","")} '
+                            f'T1=Rs{_ss.get("t1",0):.2f}(RR {_ss.get("rr_t1",0)}:1) '
+                            f'T2=Rs{_ss.get("t2",0):.2f}(RR {_ss.get("rr_t2",0)}:1) '
+                            f'SL=Rs{_ss.get("sl",0):.2f} HH={_ss.get("hh",False)} HL={_ss.get("hl",False)}')
+                    _sw_p = (
+                        f'NSE SMA Weekly swing (3-7 day hold). Analyse {len(_sw_filtered[:15])} stocks.'
+                        f' Capital Rs5L, max 2 positions. Which 2 to enter Monday morning?\n\n'
+                        + '\n'.join(_sw_sum)
+                        + '\n\nRank into enter_now(max 2), watchlist, avoid. '
+                        'Reply ONLY valid JSON no markdown: '
+                        '{"market_note":"str","portfolio_note":"str",'
+                        '"enter_now":[{"symbol":"X","rank":1,"confidence":"HIGH/MEDIUM/LOW",'
+                        '"reason":"str","risk":"str","entry_note":"str"}],'
+                        '"watchlist":[{"symbol":"X","reason":"str","entry_condition":"str"}],'
+                        '"avoid":[{"symbol":"X","reason":"str"}]}'
+                    )
+                    _sr = _sbr.post('https://api.anthropic.com/v1/messages',
+                        headers={'Content-Type':'application/json',
+                                 'x-api-key': _ant_k2,
+                                 'anthropic-version':'2023-06-01'},
+                        json={'model':'claude-sonnet-4-20250514','max_tokens':1200,
+                              'system':'You are an expert NSE swing trading analyst. Always respond with valid JSON only. No markdown.',
+                              'messages':[{'role':'user','content':_sw_p}]},timeout=45)
+                    if _sr.status_code==200:
+                        _sd2 = _sbj.loads(_sr.json()['content'][0]['text'].strip().replace('```json','').replace('```','').strip())
+                        st.session_state[_sw_batch_res]=_sd2
+                        _st2={}
+                        for _e in _sd2.get('enter_now',[]): _st2[_e['symbol']]='enter'
+                        for _w in _sd2.get('watchlist',[]): _st2[_w['symbol']]='watch'
+                        for _a in _sd2.get('avoid',[]): _st2[_a['symbol']]='avoid'
+                        st.session_state[_sw_batch_tag]=_st2
+                    else:
+                        try:
+                            _err_b2 = _sr.json().get('error',{}).get('message','Unknown')
+                        except Exception:
+                            _err_b2 = _sr.text[:200]
+                        st.error(f'AI error {_sr.status_code}: {_err_b2}')
+                except Exception as _sex2: st.error(str(_sex2)[:100])
+
+        if _sw_batch_res in st.session_state:
+            _sd = st.session_state[_sw_batch_res]
+            _sten=_sd.get('enter_now',[]); _stwl=_sd.get('watchlist',[]); _stav=_sd.get('avoid',[])
+            st.markdown(
+                f"<div style='background:white;border:2px solid #667eea44;border-radius:12px;"
+                f"padding:14px;margin-bottom:12px'>"
+                f"<b style='color:#1a2035'>🤖 AI Weekly Recommendation</b> &nbsp;"
+                f"<span style='background:#dcfce7;color:#15803d;font-size:10px;font-weight:700;border-radius:4px;padding:2px 7px'>✅ {len(_sten)} ENTER</span> "
+                f"<span style='background:#fef3c7;color:#d97706;font-size:10px;font-weight:700;border-radius:4px;padding:2px 7px'>⏳ {len(_stwl)} WATCH</span> "
+                f"<span style='background:#fee2e2;color:#dc2626;font-size:10px;font-weight:700;border-radius:4px;padding:2px 7px'>❌ {len(_stav)} AVOID</span>"
+                f"<div style='font-size:11px;color:#4c1d95;margin-top:8px;background:#f5f3ff;border-radius:6px;padding:6px 10px'>"
+                f"💡 {_sd.get('portfolio_note','')}</div>",
+                unsafe_allow_html=True)
+            if _sd.get('market_note'):
+                st.markdown(f"<div style='font-size:11px;color:#374151;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;margin-top:6px'>"
+                    f"📊 {_sd['market_note']}</div>",unsafe_allow_html=True)
+            for _e in _sten:
+                _cr3={'HIGH':'🔥','MEDIUM':'📊','LOW':'⚠️'}.get(_e.get('confidence',''),'')
+                st.markdown(
+                    f"<div style='background:white;border:1px solid #86efac;border-radius:8px;padding:8px 12px;margin-top:6px'>"
+                    f"<b>#{_e.get('rank',1)} {_e['symbol']}</b> "
+                    f"<span style='background:#15803d;color:white;font-size:10px;font-weight:700;border-radius:4px;padding:2px 7px'>{_cr3} {_e.get('confidence','')} ✅ ENTER</span><br>"
+                    f"<span style='font-size:11px;color:#374151'>{_e.get('reason','')}</span><br>"
+                    f"<span style='font-size:11px;color:#d97706'>⚠️ {_e.get('risk','')}</span> &nbsp;"
+                    f"<span style='font-size:11px;color:#1d4ed8'>🎯 {_e.get('entry_note','')}</span></div>",
+                    unsafe_allow_html=True)
+            for _w in _stwl:
+                st.markdown(f"<div style='background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:7px 12px;margin-top:4px;font-size:11px'>"
+                    f"⏳ <b>{_w['symbol']}</b> — {_w.get('reason','')} "
+                    f"<span style='color:#15803d'>📌 {_w.get('entry_condition','')}</span></div>",unsafe_allow_html=True)
+            for _a in _stav:
+                st.markdown(f"<div style='background:#fef2f2;border:1px solid #fca5a5;border-radius:7px;padding:6px 12px;margin-top:3px;font-size:11px'>"
+                    f"❌ <b>{_a['symbol']}</b> — {_a.get('reason','')}</div>",unsafe_allow_html=True)
+            st.markdown('</div>',unsafe_allow_html=True)
+            if st.button('✕ Hide AI',key='sw_hide_batch'): del st.session_state[_sw_batch_res]; st.rerun()
 
         for _sw_r in _sw_filtered[:15]:
             _sc      = _sw_r['score']
@@ -9336,8 +9918,44 @@ if _show_smaweekly:
                 <span>⚠️ Max Risk: <b style='color:#dc2626'>₹{int(_qty*_rd):,}</b></span>
                 <span>🎯 Capital: <b style='color:#1a2035'>₹{_sw_capital:,.0f}</b></span>
                 <span>📊 Risk: <b style='color:#1a2035'>{_sw_risk_pct}%</b></span>
-            </div>
             </div>""", unsafe_allow_html=True)
+
+            # ── PSAR Trailing SL Display ──────────────────
+            _sw_psar_v = _sw_r.get('psar', None)
+            _sw_psar_b = _sw_r.get('psar_bullish', False)
+            if _sw_psar_v:
+                _sp_clr = '#15803d' if _sw_psar_b else '#dc2626'
+                _sp_bg  = '#f0fdf4' if _sw_psar_b else '#fef2f2'
+                _sp_bdr = '#86efac' if _sw_psar_b else '#fca5a5'
+                _sp_ico = '✅' if _sw_psar_b else '⚠️'
+                _sp_lbl = 'Bullish — hold' if _sw_psar_b else 'Weak — caution'
+                _sp_pct = round((_entry - _sw_psar_v) / _entry * 100, 1)
+                st.markdown(f"""
+                <div style='background:{_sp_bg};border:1px solid {_sp_bdr};
+                            border-radius:8px;padding:10px 16px;margin-bottom:6px;
+                            display:flex;align-items:center;gap:16px;flex-wrap:wrap'>
+                    <div>
+                        <div style='font-size:10px;font-weight:700;color:{_sp_clr};
+                                    letter-spacing:1px'>
+                            📍 DAILY PSAR — TRAILING SL AFTER T1
+                        </div>
+                        <div style='font-size:18px;font-weight:800;color:{_sp_clr};
+                                    font-family:JetBrains Mono;margin-top:2px'>
+                            ₹{_sw_psar_v:,.2f}
+                            <span style='font-size:11px;margin-left:8px'>
+                                {_sp_ico} {_sp_lbl}
+                            </span>
+                        </div>
+                    </div>
+                    <div style='font-size:11px;color:#64748b;line-height:1.8'>
+                        <b>{_sp_pct:.1f}% below entry</b> ·
+                        After T1 hit → move Zerodha SL to ₹{_sw_psar_v:,.2f}<br>
+                        Check each morning · If daily close &lt; PSAR → EXIT
+                    </div>
+                </div>
+                </div>""", unsafe_allow_html=True)
+            else:
+                st.markdown("</div>", unsafe_allow_html=True)
 
             # ── Paper Buy button ──────────────────────────
             _sw_pb_key = f"sw_paper_buy_{_sym}_{_sw_r.get('cross_age',0)}"
@@ -10012,9 +10630,28 @@ if _show_monthlyswing:
                 if score < min_score:
                     continue
 
+                # ── Fetch live price for entry/SL/targets ─
+                # Weekly candle = used for signals and scoring (correct)
+                # Live daily price = used for entry, SL, targets (correct)
+                # This ensures SL and targets reflect TODAY's actual price
+                _live_price = None
+                try:
+                    _df_live = _t.history(
+                        period='5d', interval='1d',
+                        auto_adjust=True, actions=False)
+                    if _df_live is not None and len(_df_live) > 0:
+                        _df_live.columns = [c.split(' ')[0] if ' ' in str(c)
+                                            else c for c in _df_live.columns]
+                        _live_price = round(float(_df_live['Close'].iloc[-1]), 2)
+                except Exception:
+                    pass
+
+                # Use live price if available, else use weekly close
+                entry = _live_price if _live_price else close
+                _price_source = 'live' if _live_price else 'weekly_close'
+
                 # ── Trade plan ────────────────────────────
-                entry = close
-                sl    = max(round(close-2.0*atr7,2), round(sma20*0.97,2))
+                sl    = max(round(entry-2.0*atr7,2), round(sma20*0.97,2))
                 risk_d= entry-sl
                 if risk_d<=0: continue
 
@@ -10027,6 +10664,21 @@ if _show_monthlyswing:
                 rr2= round((t2-entry)/risk_d,1)
                 rr3= round((t3-entry)/risk_d,1)
                 mchg=round((close-float(df['Close'].iloc[-5]))/float(df['Close'].iloc[-5])*100,2) if len(df)>=5 else 0
+
+                # ── PSAR (weekly, step=0.01, max=0.10) ───
+                # Used as trailing SL after T1 hit
+                # Shows on card — user updates Zerodha SL to this level
+                _psar_val      = None
+                _psar_bullish  = False
+                try:
+                    _df_ps = calc_psar(df.copy(), step=0.01, max_af=0.10)
+                    if len(_df_ps) >= 1:
+                        _pv = float(_df_ps['PSAR'].iloc[-1])
+                        _pb = bool(_df_ps['PSAR_bull'].iloc[-1])
+                        _psar_val     = round(_pv, 2)
+                        _psar_bullish = _pb and close > _pv
+                except Exception:
+                    pass
 
                 # Liquidity
                 _dv=vol_ma*close
@@ -10052,7 +10704,10 @@ if _show_monthlyswing:
                     'symbol':       sym_clean,
                     'score':        score,
                     '_rank':        _rank,
-                    'close':        round(close,2),
+                    'close':        round(close,2),      # weekly close (for signals display)
+                    'entry':        round(entry,2),      # live price (for SL/targets/trade)
+                    'price_source': _price_source,       # 'live' or 'weekly_close'
+                    'weekly_close': round(close,2),      # always weekly close
                     'sma20':        round(sma20,2),
                     'sma50':        round(sma50,2),
                     'atr7':         round(atr7,2),
@@ -10085,7 +10740,9 @@ if _show_monthlyswing:
                     'eps':          round(_eps,2) if _eps is not None else None,
                     'earn_warn':    _earn_warn,
                     'earn_date':    _earn_date,
-                    'entry':        round(entry,2),
+                    # PSAR
+                    'psar':         _psar_val,
+                    'psar_bullish': _psar_bullish,
                     'sl':           sl,
                     't1': t1, 't2': t2, 't3': t3,
                     'qty': qty, 'inv': inv,
@@ -10194,17 +10851,316 @@ if _show_monthlyswing:
         else:
             _ms_show = _ms_results
 
-        st.markdown(
-            f"<div style='font-size:12px;color:#64748b;margin-bottom:12px'>"
-            f"📅 {len(_ms_show)} signals · Scanned {_ms_scantime} · "
-            f"Sorted by Score × R:R</div>",
-            unsafe_allow_html=True)
+        # ── CSV Export — Monthly Swing ─────────────────
+        def _ms_to_csv(results):
+            import csv, io
+            _buf = io.StringIO()
+            _cols = [
+                'Symbol','Score','Rank','Signal','Entry','Weekly_Close',
+                'Price_Source','SMA20','SMA50','ATR','RSI','Vol_Ratio',
+                'Trend_Weeks','SMA20_Slope','Fib_Retrace','Fib_Zone',
+                'HH','HL','RS_vs_Nifty','OBV_Slope','MACD',
+                'Sector_Bull','Pct_From_52W','Inside_Week',
+                'Stop_Loss','T1','T2','T3',
+                'Qty','Investment','Risk_Amt','RR_T1','RR_T2','RR_T3',
+                'Liquidity','DE_Ratio','Promoter_Pct','EPS',
+                'Results_Warning','Results_Date',
+                'Cap_Tier','Scan_Date',
+            ]
+            _w = csv.DictWriter(_buf, fieldnames=_cols, extrasaction='ignore')
+            _w.writeheader()
+            for r in results:
+                _fz = ("23-38% Ideal" if r.get('fib_retrace',50)<38.2 and r.get('fib_retrace',50)>=23.6
+                       else "38-50% Good" if r.get('fib_retrace',50)<50
+                       else "50-61% OK"   if r.get('fib_retrace',50)<61.8
+                       else "61-78% Deep" if r.get('fib_retrace',50)<78.6
+                       else ">78% Deep")
+                _w.writerow({
+                    'Symbol':          r.get('symbol',''),
+                    'Score':           r.get('score',0),
+                    'Rank':            round(r.get('_rank',0),1),
+                    'Signal':          r.get('signal_label',''),
+                    'Entry':           r.get('entry',0),
+                    'Weekly_Close':    r.get('weekly_close',0),
+                    'Price_Source':    r.get('price_source',''),
+                    'SMA20':           r.get('sma20',0),
+                    'SMA50':           r.get('sma50',0),
+                    'ATR':             r.get('atr7',0),
+                    'RSI':             r.get('rsi',0),
+                    'Vol_Ratio':       r.get('vol_ratio',0),
+                    'Trend_Weeks':     r.get('trend_weeks',0),
+                    'SMA20_Slope':     r.get('sma20_slope',0),
+                    'Fib_Retrace':     r.get('fib_retrace',0),
+                    'Fib_Zone':        _fz,
+                    'HH':              r.get('hh',False),
+                    'HL':              r.get('hl',False),
+                    'RS_vs_Nifty':     round((r.get('rs_ratio',1)-1)*100,2),
+                    'OBV_Slope':       r.get('obv_slope',0),
+                    'MACD':            ('FreshCross' if r.get('macd_cross') else
+                                        'Above' if r.get('macd_above') else 'Below'),
+                    'Sector_Bull':     r.get('sec_bull',True),
+                    'Pct_From_52W':    r.get('pct_from_52w',0),
+                    'Inside_Week':     r.get('inside_week',False),
+                    'Stop_Loss':       r.get('sl',0),
+                    'T1':              r.get('t1',0),
+                    'T2':              r.get('t2',0),
+                    'T3':              r.get('t3',0),
+                    'Qty':             r.get('qty',0),
+                    'Investment':      r.get('inv',0),
+                    'Risk_Amt':        round(r.get('qty',0)*r.get('risk_d',0),0),
+                    'RR_T1':           r.get('rr_t1',0),
+                    'RR_T2':           r.get('rr_t2',0),
+                    'RR_T3':           r.get('rr_t3',0),
+                    'Liquidity':       r.get('liq_grade',''),
+                    'DE_Ratio':        r.get('de_ratio',''),
+                    'Promoter_Pct':    r.get('promoter',''),
+                    'EPS':             r.get('eps',''),
+                    'Results_Warning': r.get('earn_warn',False),
+                    'Results_Date':    r.get('earn_date',''),
+                    'Cap_Tier':        r.get('cap_tier',''),
+                    'Scan_Date':       _ms_scantime,
+                })
+            return _buf.getvalue().encode('utf-8')
+
+        _ms_hdr1, _ms_hdr2 = st.columns([4, 1])
+        with _ms_hdr1:
+            st.markdown(
+                f"<div style='font-size:12px;color:#64748b;margin-bottom:12px'>"
+                f"📅 {len(_ms_show)} signals · Scanned {_ms_scantime} · "
+                f"Sorted by Score × R:R</div>",
+                unsafe_allow_html=True)
+        with _ms_hdr2:
+            _ms_csv_fname = f"monthly_swing_{ist_now().strftime('%d%b%Y')}.csv"
+            st.download_button(
+                label="📥 Download CSV",
+                data=_ms_to_csv(_ms_show),
+                file_name=_ms_csv_fname,
+                mime="text/csv",
+                use_container_width=True,
+                help=f"Download all {len(_ms_show)} signals as CSV"
+            )
+
+        # ── Batch AI Portfolio Recommendation ─────────
+        _ms_batch_key = "ms_batch_ai_btn"
+        _ms_batch_res = "ms_batch_ai_result"
+        _ms_batch_tag = "ms_batch_ai_tags"  # per-symbol verdict tags
+
+        if st.button(
+            f"🤖 AI Analyse All {len(_ms_show)} Stocks — Get Portfolio Recommendation",
+            key=_ms_batch_key, use_container_width=True,
+            help="Single AI call analyses all stocks together and recommends which 2-3 to enter"
+        ):
+            with st.spinner("🤖 Analysing all stocks together..."):
+                try:
+                    import requests as _br, json as _bj
+                    _ant_k = load_anthropic_key()
+                    if not _ant_k:
+                        st.error("❌ Anthropic API key not set. Go to sidebar → 🤖 AI Validation → Set Anthropic API Key")
+                        raise Exception("API key not configured")
+                    # Build compact summary for each stock
+                    _stock_summaries = []
+                    for _bi, _br_s in enumerate(_ms_show[:10], 1):
+                        _bs = _br_s
+                        _fz = ("23-38% Ideal" if _bs.get('fib_retrace',50)<38.2 and _bs.get('fib_retrace',50)>=23.6
+                               else "38-50% Good" if _bs.get('fib_retrace',50)<50
+                               else "50-61% OK"   if _bs.get('fib_retrace',50)<61.8
+                               else "61-78% Deep" if _bs.get('fib_retrace',50)<78.6
+                               else ">78% VeryDeep")
+                        _stock_summaries.append(
+                            f"STOCK {_bi}: {_bs['symbol']}\n"
+                            f"  Score={_bs['score']}/145 | Entry=Rs{_bs['entry']:.2f} | "
+                            f"SMA20=Rs{_bs['sma20']:.2f}({_bs.get('pct_above20',0):+.1f}%)\n"
+                            f"  RSI={_bs.get('rsi',0):.1f} | Vol={_bs.get('vol_ratio',0):.1f}x | "
+                            f"Trend={_bs.get('trend_weeks',0)}wk | Signal={_bs.get('signal_label','')}\n"
+                            f"  MACD={'FreshCross' if _bs.get('macd_cross') else 'AboveSignal' if _bs.get('macd_above') else 'Below'} | "
+                            f"OBV={'Accum' if _bs.get('obv_slope',0)>0 else 'Distrib'}({_bs.get('obv_slope',0):+.1f}%)\n"
+                            f"  Fib={_fz}({_bs.get('fib_retrace',0):.1f}%) | "
+                            f"RS={'+'if _bs.get('rs_ratio',1)>=1 else ''}{(_bs.get('rs_ratio',1)-1)*100:.1f}% | "
+                            f"Sector={'Bull' if _bs.get('sec_bull',True) else 'Bear'}\n"
+                            f"  D/E={_bs.get('de_ratio','N/A')} | "
+                            f"Promoter={_bs.get('promoter','N/A')}% | "
+                            f"EPS={'Rs'+str(_bs.get('eps','N/A')) if _bs.get('eps') else 'N/A'}\n"
+                            f"  Results={'YES WARNING' if _bs.get('earn_warn') else 'No'} | "
+                            f"T1=Rs{_bs.get('t1',0):.2f}(RR {_bs.get('rr_t1',0)}:1) | "
+                            f"T2=Rs{_bs.get('t2',0):.2f}(RR {_bs.get('rr_t2',0)}:1)"
+                        )
+                    _nifty_ctx = "Bullish" if st.session_state.get("ms_nifty_bullish", True) else "Bearish"
+                    _batch_prompt = (
+                        f"You are an expert NSE swing trader. Analyse these {len(_ms_show[:10])} Monthly Swing candidates "
+                        f"(3-5 week hold) and recommend which 2-3 to enter given Rs5L capital.\n\n"
+                        f"Market: Nifty Weekly = {_nifty_ctx}\n"
+                        f"Capital: Rs5,00,000 | Max positions: 2-3\n\n"
+                        + "\n".join(_stock_summaries) +
+                        f"\n\nRank ALL stocks into 3 categories: enter_now, watchlist, avoid.\n"
+                        f"Consider: Fibonacci zone quality, signal freshness, volume confirmation,\n"
+                        f"fundamental strength, results risk, sector momentum, R:R ratio.\n"
+                        f"Reply ONLY with valid JSON (no markdown):\n"
+                        f'{{"market_note":"1-2 sentences on current market condition",'
+                        f'"portfolio_note":"1-2 sentences on capital allocation strategy",'
+                        f'"enter_now":[{{"symbol":"X","rank":1,"confidence":"HIGH/MEDIUM/LOW",'
+                        f'"reason":"2 sentences","risk":"main risk","entry_note":"entry guidance"}}],'
+                        f'"watchlist":[{{"symbol":"X","reason":"why wait","entry_condition":"when to enter"}}],'
+                        f'"avoid":[{{"symbol":"X","reason":"why avoid"}}]}}'
+                    )
+                    _br_resp = _br.post(
+                        "https://api.anthropic.com/v1/messages",
+                        headers={"Content-Type":"application/json",
+                                 "x-api-key": load_anthropic_key(),
+                                 "anthropic-version":"2023-06-01"},
+                        json={"model":"claude-sonnet-4-20250514","max_tokens":1500,
+                              "system":"You are an expert NSE swing trading analyst. Always respond with valid JSON only. No markdown, no explanation outside JSON.",
+                              "messages":[{"role":"user","content":_batch_prompt}]},
+                        timeout=45)
+                    if _br_resp.status_code == 200:
+                        _br_raw   = _br_resp.json()["content"][0]["text"].strip()
+                        _br_clean = _br_raw.replace("```json","").replace("```","").strip()
+                        _br_data  = _bj.loads(_br_clean)
+                        st.session_state[_ms_batch_res] = _br_data
+                        # Build tag dict for colouring stock cards
+                        _tags = {}
+                        for _be in _br_data.get("enter_now",[]): _tags[_be["symbol"]] = "enter"
+                        for _bw in _br_data.get("watchlist",[]): _tags[_bw["symbol"]] = "watch"
+                        for _ba in _br_data.get("avoid",[]):     _tags[_ba["symbol"]] = "avoid"
+                        st.session_state[_ms_batch_tag] = _tags
+                    else:
+                        try:
+                            _err_body = _br_resp.json()
+                            _err_msg  = _err_body.get("error",{}).get("message","Unknown")
+                        except Exception:
+                            _err_msg = _br_resp.text[:200]
+                        st.error(f"AI error {_br_resp.status_code}: {_err_msg}")
+                except Exception as _bex:
+                    st.error(f"AI error: {str(_bex)[:100]}")
+
+        # Show batch AI result
+        if _ms_batch_res in st.session_state:
+            _bd    = st.session_state[_ms_batch_res]
+            _btags = st.session_state.get(_ms_batch_tag, {})
+            _ben   = _bd.get("enter_now", [])
+            _bwl   = _bd.get("watchlist", [])
+            _bav   = _bd.get("avoid", [])
+
+            # Summary row
+            st.markdown(
+                f"<div style='background:white;border:2px solid #667eea44;border-radius:16px;"
+                f"padding:16px 20px;margin-bottom:16px;box-shadow:0 4px 20px rgba(102,126,234,0.12)'>"
+                f"<div style='display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap'>"
+                f"<span style='font-size:18px'>🤖</span>"
+                f"<span style='font-size:15px;font-weight:800;color:#1a2035'>AI Portfolio Recommendation</span>"
+                f"<span style='background:#eff6ff;color:#1d4ed8;font-size:10px;font-weight:700;"
+                f"border-radius:4px;padding:2px 8px'>Monthly Swing · {_ms_scantime}</span>"
+                f"</div>"
+                f"<div style='display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap'>"
+                f"<div style='background:#dcfce7;border:1px solid #86efac33;border-radius:10px;"
+                f"padding:10px 16px;text-align:center;flex:1;min-width:80px'>"
+                f"<div style='font-size:22px;font-weight:900;color:#15803d'>{len(_ben)}</div>"
+                f"<div style='font-size:10px;font-weight:700;color:#15803d'>✅ ENTER NOW</div></div>"
+                f"<div style='background:#fef3c7;border:1px solid #fde68a33;border-radius:10px;"
+                f"padding:10px 16px;text-align:center;flex:1;min-width:80px'>"
+                f"<div style='font-size:22px;font-weight:900;color:#d97706'>{len(_bwl)}</div>"
+                f"<div style='font-size:10px;font-weight:700;color:#d97706'>⏳ WATCHLIST</div></div>"
+                f"<div style='background:#fee2e2;border:1px solid #fca5a533;border-radius:10px;"
+                f"padding:10px 16px;text-align:center;flex:1;min-width:80px'>"
+                f"<div style='font-size:22px;font-weight:900;color:#dc2626'>{len(_bav)}</div>"
+                f"<div style='font-size:10px;font-weight:700;color:#dc2626'>❌ AVOID</div></div>"
+                f"<div style='background:#f5f3ff;border:1px solid #ddd6fe33;border-radius:10px;"
+                f"padding:10px 16px;flex:2;min-width:160px'>"
+                f"<div style='font-size:10px;font-weight:700;color:#7c3aed;margin-bottom:4px'>💡 STRATEGY</div>"
+                f"<div style='font-size:11px;color:#4c1d95;line-height:1.5'>{_bd.get('portfolio_note','')}</div>"
+                f"</div></div>",
+                unsafe_allow_html=True)
+
+            # Market note
+            if _bd.get("market_note"):
+                st.markdown(
+                    f"<div style='background:#fffbeb;border:1px solid #fde68a;border-radius:8px;"
+                    f"padding:10px 14px;margin-bottom:10px;font-size:12px;color:#374151'>"
+                    f"<b style='color:#d97706'>📊 Market:</b> {_bd['market_note']}"
+                    f"</div>", unsafe_allow_html=True)
+
+            # Enter Now
+            if _ben:
+                st.markdown("<div style='font-size:11px;font-weight:700;color:#15803d;"
+                            "letter-spacing:1px;margin-bottom:6px'>✅ ENTER NOW</div>",
+                            unsafe_allow_html=True)
+                for _be in _ben:
+                    _cr = {"HIGH":"🔥","MEDIUM":"📊","LOW":"⚠️"}.get(_be.get("confidence",""),"")
+                    st.markdown(
+                        f"<div style='background:white;border:1.5px solid #86efac;"
+                        f"border-radius:10px;padding:12px 14px;margin-bottom:8px'>"
+                        f"<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px'>"
+                        f"<span style='background:#15803d;color:white;font-size:11px;font-weight:900;"
+                        f"border-radius:50%;width:22px;height:22px;display:flex;align-items:center;"
+                        f"justify-content:center'>#{_be.get('rank',1)}</span>"
+                        f"<span style='font-size:15px;font-weight:800;color:#1a2035'>{_be['symbol']}</span>"
+                        f"<span style='background:#dcfce7;color:#15803d;font-size:10px;font-weight:700;"
+                        f"border-radius:4px;padding:2px 8px'>✅ ENTER</span>"
+                        f"<span style='background:#15803d;color:white;font-size:10px;font-weight:700;"
+                        f"border-radius:4px;padding:2px 8px'>{_cr} {_be.get('confidence','')} CONFIDENCE</span>"
+                        f"</div>"
+                        f"<div style='font-size:11px;color:#374151;line-height:1.7;margin-bottom:6px'>"
+                        f"{_be.get('reason','')}</div>"
+                        f"<div style='display:flex;gap:8px;flex-wrap:wrap;font-size:11px'>"
+                        f"<span style='background:#fff7ed;border:1px solid #fde68a;border-radius:6px;"
+                        f"padding:4px 8px'>⚠️ <b>Risk:</b> {_be.get('risk','')}</span>"
+                        f"<span style='background:#eff6ff;border:1px solid #bfdbfe;border-radius:6px;"
+                        f"padding:4px 8px'>🎯 <b>Entry:</b> {_be.get('entry_note','')}</span>"
+                        f"</div></div>", unsafe_allow_html=True)
+
+            # Watchlist
+            if _bwl:
+                st.markdown("<div style='font-size:11px;font-weight:700;color:#d97706;"
+                            "letter-spacing:1px;margin:8px 0 6px'>⏳ WATCHLIST — Wait for better entry</div>",
+                            unsafe_allow_html=True)
+                for _bw in _bwl:
+                    st.markdown(
+                        f"<div style='background:white;border:1.5px solid #fde68a;"
+                        f"border-radius:10px;padding:10px 14px;margin-bottom:6px;"
+                        f"display:flex;gap:10px;align-items:flex-start'>"
+                        f"<span style='background:#fef3c7;color:#d97706;font-size:10px;font-weight:700;"
+                        f"border-radius:6px;padding:3px 8px;flex-shrink:0'>⏳ WAIT</span>"
+                        f"<div>"
+                        f"<span style='font-weight:800;color:#1a2035;font-size:13px'>{_bw['symbol']}</span>"
+                        f"<span style='font-size:11px;color:#374151;margin-left:8px'>{_bw.get('reason','')}</span>"
+                        f"<div style='font-size:11px;background:#f0fdf4;border:1px solid #86efac;"
+                        f"border-radius:6px;padding:4px 8px;margin-top:4px;color:#15803d'>"
+                        f"📌 <b>When:</b> {_bw.get('entry_condition','')}</div>"
+                        f"</div></div>", unsafe_allow_html=True)
+
+            # Avoid
+            if _bav:
+                st.markdown("<div style='font-size:11px;font-weight:700;color:#dc2626;"
+                            "letter-spacing:1px;margin:8px 0 6px'>❌ AVOID</div>",
+                            unsafe_allow_html=True)
+                for _ba in _bav:
+                    st.markdown(
+                        f"<div style='background:#fef2f2;border:1px solid #fca5a5;"
+                        f"border-radius:8px;padding:8px 12px;margin-bottom:5px;"
+                        f"display:flex;gap:8px;align-items:flex-start'>"
+                        f"<span style='font-size:14px'>❌</span>"
+                        f"<div><b style='color:#dc2626;font-size:12px'>{_ba['symbol']}</b>"
+                        f"<span style='font-size:11px;color:#374151;margin-left:8px'>"
+                        f"{_ba.get('reason','')}</span></div>"
+                        f"</div>", unsafe_allow_html=True)
+
+            # Close button
+            st.markdown("</div>", unsafe_allow_html=True)
+            if st.button("✕ Hide AI Recommendation", key="ms_hide_batch",
+                         use_container_width=False):
+                del st.session_state[_ms_batch_res]
+                st.rerun()
+
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
 
         for _ms_r in _ms_show[:10]:
             _sc   = _ms_r['score']
             _sym  = _ms_r['symbol']
             _rk   = _ms_r['_rank']
-            _close= _ms_r['close']
+            _close= _ms_r['close']        # weekly close (for signals)
+            _entry= _ms_r['entry']        # live price (for trade)
+            _wk_cls = _ms_r.get('weekly_close', _close)
+            _psrc   = _ms_r.get('price_source', 'weekly_close')
+            _is_live= _psrc == 'live'
             _s20  = _ms_r['sma20']
             _s50  = _ms_r['sma50']
             _atr  = _ms_r['atr7']
@@ -10212,7 +11168,6 @@ if _show_monthlyswing:
             _volx = _ms_r['vol_ratio']
             _tw   = _ms_r['trend_weeks']
             _slab = _ms_r['signal_label']
-            _entry= _ms_r['entry']
             _sl   = _ms_r['sl']
             _t1   = _ms_r['t1']
             _t2   = _ms_r['t2']
@@ -10280,6 +11235,12 @@ if _show_monthlyswing:
             _sc_clr = '#15803d' if _sc>=80 else ('#1d4ed8' if _sc>=70 else '#d97706')
             _sc_bg  = '#dcfce7' if _sc>=80 else ('#dbeafe' if _sc>=70 else '#fef3c7')
             _sc_bdr = _sc_clr+'33'
+            # Override border if AI batch verdict available
+            _ai_tag = st.session_state.get(_ms_batch_tag, {}).get(_sym, '')
+            if _ai_tag == 'enter': _sc_bdr = '#86efac'; _ai_badge = "✅ AI: ENTER"
+            elif _ai_tag == 'watch': _sc_bdr = '#fde68a'; _ai_badge = "⏳ AI: WATCH"
+            elif _ai_tag == 'avoid': _sc_bdr = '#fca5a5'; _ai_badge = "❌ AI: AVOID"
+            else: _ai_badge = ""
             _cap_ico,_cap_name,_cap_clr,_cap_bg = CAP_TIER_BADGE.get(
                 _cap, ('🟠','Smallcap','#c2410c','#fff7ed'))
             _cap_bdr = _cap_clr+'44'
@@ -10300,52 +11261,50 @@ if _show_monthlyswing:
                 f"border-radius:16px;padding:18px 20px;margin-bottom:14px;'>",
                 unsafe_allow_html=True)
 
-            st.markdown(f"""
-            <div style='display:flex;justify-content:space-between;
-                        align-items:flex-start;flex-wrap:wrap;gap:8px;
-                        margin-bottom:12px'>
-                <div>
-                    <div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'>
-                        <span style='font-size:22px;font-weight:800;color:#1a2035'>
-                            {_sym}
-                        </span>
-                        <span style='background:{_sc_bg};color:{_sc_clr};
-                                     font-size:11px;font-weight:700;
-                                     border-radius:6px;padding:3px 10px'>
-                            Score {_sc}/100 · Rank {_rk:.0f}
-                        </span>
-                        <span style='background:{_cap_bg};color:{_cap_clr};
-                                     font-size:10px;font-weight:700;
-                                     border-radius:4px;padding:2px 8px;
-                                     border:1px solid {_cap_bdr}'>
-                            {_cap_ico} {_cap_name}
-                        </span>
-                        <span style='background:{_lb};color:{_lc};
-                                     font-size:10px;font-weight:700;
-                                     border-radius:4px;padding:2px 8px;
-                                     border:1px solid {_liq_bdr}'>
-                            {_li} {_lg} · {_lt}
-                        </span>
-                    </div>
-                    <div style='font-size:12px;color:#64748b;margin-top:6px'>
-                        <span style='color:#7c3aed;font-weight:700'>{_slab}</span>
-                        &nbsp;·&nbsp; RSI {_rsi}
-                        &nbsp;·&nbsp; Vol {_volx}×
-                        &nbsp;·&nbsp; Trend {_tw}wk
-                        &nbsp;·&nbsp;
-                        <span style='color:{_mchg_clr}'>Month {_mchg:+.1f}%</span>
-                    </div>
-                </div>
-                <div style='text-align:right'>
-                    <div style='font-size:26px;font-weight:800;
-                                color:#1a2035;font-family:JetBrains Mono'>
-                        ₹{_close:,.2f}
-                    </div>
-                    <div style='font-size:11px;color:#64748b'>
-                        SMA20 ₹{_s20:,.2f} · SMA50 ₹{_s50:,.2f}
-                    </div>
-                </div>
-            </div>""", unsafe_allow_html=True)
+            # ── Card header ─────────────────────────────────────
+            _live_clr    = "#15803d" if _is_live else "#d97706"
+            _live_lbl    = "\U0001f7e2 Live" if _is_live else "\U0001f7e1 Wk Close"
+            _wk_cls_str  = f"Wk close \u20b9{_wk_cls:,.2f} \u00b7 " if _is_live else ""
+            if _ai_badge:
+                _ai_badge_html = (
+                    "<span style='background:#f0fdf4;color:#15803d;font-size:10px;"
+                    "font-weight:700;border-radius:4px;padding:2px 8px;"
+                    f"border:1px solid #86efac'>{_ai_badge}</span>"
+                )
+            else:
+                _ai_badge_html = ""
+            _hdr = (
+                "<div style='display:flex;justify-content:space-between;"
+                "align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:12px'>"
+                "<div>"
+                "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'>"
+                f"<span style='font-size:22px;font-weight:800;color:#1a2035'>{_sym}</span>"
+                f"<span style='background:{_sc_bg};color:{_sc_clr};font-size:11px;"
+                f"font-weight:700;border-radius:6px;padding:3px 10px'>"
+                f"Score {_sc}/100 \u00b7 Rank {_rk:.0f}</span>"
+                f"{_ai_badge_html}"
+                f"<span style='background:{_cap_bg};color:{_cap_clr};font-size:10px;"
+                f"font-weight:700;border-radius:4px;padding:2px 8px;"
+                f"border:1px solid {_cap_bdr}'>{_cap_ico} {_cap_name}</span>"
+                f"<span style='background:{_lb};color:{_lc};font-size:10px;"
+                f"font-weight:700;border-radius:4px;padding:2px 8px;"
+                f"border:1px solid {_liq_bdr}'>{_li} {_lg} \u00b7 {_lt}</span>"
+                "</div>"
+                f"<div style='font-size:12px;color:#64748b;margin-top:6px'>"
+                f"<span style='color:#7c3aed;font-weight:700'>{_slab}</span>"
+                f" \u00b7 RSI {_rsi} \u00b7 Vol {_volx}\u00d7 \u00b7 Trend {_tw}wk \u00b7 "
+                f"<span style='color:{_mchg_clr}'>Month {_mchg:+.1f}%</span>"
+                "</div></div>"
+                "<div style='text-align:right'>"
+                f"<div style='font-size:26px;font-weight:800;color:#1a2035;"
+                f"font-family:JetBrains Mono'>\u20b9{_entry:,.2f}"
+                f"<span style='font-size:11px;font-weight:600;"
+                f"color:{_live_clr};margin-left:6px'>{_live_lbl}</span></div>"
+                f"<div style='font-size:11px;color:#64748b'>"
+                f"{_wk_cls_str}SMA20 \u20b9{_s20:,.2f} \u00b7 SMA50 \u20b9{_s50:,.2f}"
+                "</div></div></div>"
+            )
+            st.markdown(_hdr, unsafe_allow_html=True)
 
             # ── Trend quality row (all 8 checks) ──────
             _sl_clr2 = '#15803d' if _sl_str>=0.5 else ('#d97706' if _sl_str>0 else '#dc2626')
@@ -10356,14 +11315,25 @@ if _show_monthlyswing:
             _macd_lbl= 'Fresh cross' if _macd_x else ('Above signal' if _macd_a else 'Below signal')
             _sec_clr = '#15803d' if _sec_b else '#dc2626'
             _52w_clr = '#15803d' if _52w<=10 else ('#d97706' if _52w<=20 else '#dc2626')
+            # Pre-built conditional strings (avoid nested f-string issues)
+            _p20_clr    = '#15803d' if _p20<=3 else '#d97706'
+            _hh_ico     = '✅' if _hh else '❌'
+            _hl_ico     = '✅' if _hl else '❌'
+            _sec_ico    = '✅' if _sec_b else '❌'
+            _inw_str    = '✅InsideWk' if _inw else f'{_wkrng:.1f}%rng'
+            _rs_sign    = '+' if _rs>=1 else ''
+            _obv_str    = '↑Accum' if _obv>0 else '↓Distrib'
+            _rseas_html = '<span><b style="color:#d97706">⚠️Results</b></span>' if _rseas else ''
+            _eps_html   = f'<span><b>{_eps_str}</b></span>' if _eps_str else ''
+            _ew_html    = (f'<span style="color:#dc2626"><b>⚠️ Results {_ed} — verify</b></span>') if _ew else ''
             st.markdown(
                 f"<div style='background:#f8fafc;border-radius:8px;padding:10px 14px;"
                 f"margin-bottom:10px;font-size:11px'>"
                 f"<div style='display:flex;gap:12px;flex-wrap:wrap;margin-bottom:5px'>"
-                f"<span>HH:{'✅' if _hh else '❌'}</span>"
-                f"<span>HL:{'✅' if _hl else '❌'}</span>"
+                f"<span>HH:{_hh_ico}</span>"
+                f"<span>HL:{_hl_ico}</span>"
                 f"<span>SMA20 slope:<b style='color:{_sl_clr2}'>{_sl_lbl} {_sl_str:+.2f}%</b></span>"
-                f"<span>vs SMA20:<b style='color:{'#15803d' if _p20<=3 else '#d97706'}'>+{_p20:.1f}%</b></span>"
+                f"<span>vs SMA20:<b style='color:{_p20_clr}'>+{_p20:.1f}%</b></span>"
                 f"<span>vs SMA50:<b>+{_p50:.1f}%</b></span>"
                 f"<span>Trend {_tw}wk</span>"
                 f"<span>ATR ₹{_atr:,.2f}</span>"
@@ -10372,21 +11342,21 @@ if _show_monthlyswing:
                 f"padding-top:5px;border-top:1px solid #e2e8f0'>"
                 f"<span>📐 Fib: <b style='color:{_fib_clr}'>{_fib_zone} ({_fib_ret:.1f}%)</b></span>"
                 f"<span>Fib38=₹{_fib_382:,.0f} · Fib62=₹{_fib_618:,.0f}</span>"
-                f"<span>RS:<b style='color:{_rs_clr}'>{'+' if _rs>=1 else ''}{(_rs-1)*100:.1f}%</b></span>"
-                f"<span>OBV:<b style='color:{_obv_clr}'>{'↑Accum' if _obv>0 else '↓Distrib'}</b></span>"
+                f"<span>RS:<b style='color:{_rs_clr}'>{_rs_sign}{(_rs-1)*100:.1f}%</b></span>"
+                f"<span>OBV:<b style='color:{_obv_clr}'>{_obv_str}</b></span>"
                 f"<span>MACD:<b style='color:{_macd_clr}'>{_macd_lbl}</b></span>"
-                f"<span>Sector:<b style='color:{_sec_clr}'>{'✅' if _sec_b else '❌'}</b></span>"
+                f"<span>Sector:<b style='color:{_sec_clr}'>{_sec_ico}</b></span>"
                 f"<span>52W:<b style='color:{_52w_clr}'>{_52w:.1f}%↓</b></span>"
-                f"<span>{'✅InsideWk' if _inw else f'{_wkrng:.1f}%rng'}</span>"
-                f"{'<span><b style=color:#d97706>⚠️Results</b></span>' if _rseas else ''}"
-                f"</div>"
-                f"<div style='display:flex;gap:12px;flex-wrap:wrap;"
-                f"padding-top:5px;border-top:1px solid #e2e8f0'>"
+                f"<span>{_inw_str}</span>"
+                f"{_rseas_html}"
+                "</div>"
+                "<div style='display:flex;gap:12px;flex-wrap:wrap;"
+                "padding-top:5px;border-top:1px solid #e2e8f0'>"
                 f"<span>💰 <b style='color:{_de_clr}'>{_de_str}</b></span>"
                 f"<span>👤 <b style='color:{_prom_clr}'>{_prom_str}</b></span>"
-                f"{'<span><b>' + _eps_str + '</b></span>' if _eps_str else ''}"
-                f"{'<span style=color:#dc2626><b>⚠️ Results ' + _ed + ' — verify before entry</b></span>' if _ew else ''}"
-                f"</div></div>",
+                f"{_eps_html}"
+                f"{_ew_html}"
+                "</div></div>",
                 unsafe_allow_html=True)
 
             # ── Targets ───────────────────────────────
@@ -10445,8 +11415,148 @@ if _show_monthlyswing:
                 <span>🎯 Capital: <b style='color:#1a2035'>₹{_ms_capital:,.0f}</b></span>
                 <span>📊 Risk: <b style='color:#1a2035'>{_ms_risk}%</b></span>
                 <span>⏳ Hold: <b style='color:#7c3aed'>3–5 weeks</b></span>
-            </div>
             </div>""", unsafe_allow_html=True)
+
+            # ── PSAR Trailing SL Display ───────────────
+            _psar_v   = _ms_r.get('psar', None)
+            _psar_b   = _ms_r.get('psar_bullish', False)
+            if _psar_v:
+                _psar_clr  = '#15803d' if _psar_b else '#dc2626'
+                _psar_bg   = '#f0fdf4' if _psar_b else '#fef2f2'
+                _psar_bdr  = '#86efac' if _psar_b else '#fca5a5'
+                _psar_ico  = '✅' if _psar_b else '⚠️'
+                _psar_lbl  = 'Bullish — hold' if _psar_b else 'Check — may be weak'
+                _psar_pct  = round((_entry - _psar_v) / _entry * 100, 1)
+                st.markdown(f"""
+                <div style='background:{_psar_bg};border:1px solid {_psar_bdr};
+                            border-radius:8px;padding:10px 16px;margin-bottom:6px;
+                            display:flex;align-items:center;gap:16px;flex-wrap:wrap'>
+                    <div>
+                        <div style='font-size:10px;font-weight:700;color:{_psar_clr};
+                                    letter-spacing:1px'>
+                            📍 WEEKLY PSAR — TRAILING SL AFTER T1
+                        </div>
+                        <div style='font-size:18px;font-weight:800;color:{_psar_clr};
+                                    font-family:JetBrains Mono;margin-top:2px'>
+                            ₹{_psar_v:,.2f}
+                            <span style='font-size:11px;font-weight:600;margin-left:8px'>
+                                {_psar_ico} {_psar_lbl}
+                            </span>
+                        </div>
+                    </div>
+                    <div style='font-size:11px;color:#64748b;line-height:1.8'>
+                        <b>{_psar_pct:.1f}% below entry</b> ·
+                        After T1 hit → move Zerodha SL to ₹{_psar_v:,.2f}<br>
+                        Check every Friday · If price &lt; PSAR on weekly close → EXIT
+                    </div>
+                </div>
+                </div>""", unsafe_allow_html=True)
+            else:
+                st.markdown("</div>", unsafe_allow_html=True)
+
+
+            # ── LLM Validation ────────────────────────
+            _llm_key     = f"llm_ms_{_sym}_{_sc}"
+            _llm_res_key = f"llm_ms_result_{_sym}_{_sc}"
+
+            if st.button(
+                f"🤖 AI Validate {_sym} — Should I enter this trade?",
+                key=_llm_key, use_container_width=True
+            ):
+                with st.spinner(f"🤖 Analysing {_sym}..."):
+                    try:
+                        import requests as _req, json as _json
+                        _fib_zone_txt = (
+                            "23-38% Ideal" if _fib_ret<38.2 and _fib_ret>=23.6
+                            else "38-50% Good" if _fib_ret<50
+                            else "50-61% OK" if _fib_ret<61.8
+                            else "61-78% Deep" if _fib_ret<78.6
+                            else ">78% Very deep")
+                        _psar_txt = f"Rs{_psar_v:.2f} bullish" if _psar_v and _psar_b else (f"Rs{_psar_v:.2f} bearish" if _psar_v else "N/A")
+                        _nifty_txt = "Bullish" if st.session_state.get("ms_nifty_bullish", True) else "Bearish"
+                        _prompt = (
+                            f"You are an expert NSE swing trader. Analyse this Monthly Swing setup (3-5 week hold) and give verdict.\n\n"
+                            f"STOCK: {_sym} | Price: Rs{_entry:.2f} | Score: {_sc}/145\n"
+                            f"SMA20: Rs{_s20:.2f} ({_p20:+.1f}%) | SMA50: Rs{_s50:.2f} ({_p50:+.1f}%) | Slope: {_sl_str:+.2f}%\n"
+                            f"RSI: {_rsi:.1f} | Vol: {_volx:.1f}x | Trend: {_tw}wk | Signal: {_slab}\n"
+                            f"MACD: {'Fresh cross' if _macd_x else 'Above signal' if _macd_a else 'Below signal'}\n"
+                            f"OBV: {'Accumulation' if _obv>0 else 'Distribution'} ({_obv:+.1f}%)\n"
+                            f"RS vs Nifty: {((_rs-1)*100):+.1f}% | Sector: {'Bullish' if _sec_b else 'Bearish'}\n"
+                            f"52W: {_52w:.1f}% below | HH: {_hh} | HL: {_hl} | Inside week: {_inw}\n"
+                            f"Fibonacci: {_fib_zone_txt} ({_fib_ret:.1f}% retrace) | Fib38=Rs{_fib_382:.0f} Fib62=Rs{_fib_618:.0f}\n"
+                            f"PSAR: {_psar_txt} | Monthly chg: {_mchg:+.1f}%\n"
+                            f"D/E: {f'{_de_val:.2f}' if _de_val else 'N/A'} | Promoter: {f'{_prom_val:.0f}%' if _prom_val else 'N/A'} | EPS: {f'Rs{_eps_val:.1f}' if _eps_val else 'N/A'}\n"
+                            f"Results warning: {'YES' if _ew else 'No'}{f' on {_ed}' if _ew and _ed else ''}\n"
+                            f"Entry: Rs{_entry:.2f} | SL: Rs{_sl:.2f} ({((_entry-_sl)/_entry*100):.1f}%) | T1: Rs{_t1:.2f} R:R {_rr1}:1 | T2: Rs{_t2:.2f} R:R {_rr2}:1\n"
+                            f"Nifty Weekly: {_nifty_txt}\n\n"
+                            f"Reply ONLY with valid JSON, no markdown:\n"
+                            f'{{"verdict":"BUY or WAIT or AVOID","confidence":"HIGH or MEDIUM or LOW",'
+                            f'"reason":"2-3 sentences on key strengths or weaknesses",'
+                            f'"main_risk":"single biggest risk for this trade",'
+                            f'"best_entry":"ideal entry price zone or condition",'
+                            f'"hold_target":"most realistic target T1 T2 or T3 and why",'
+                            f'"score_comment":"one line on score {_sc}/145"}}'
+                        )
+                        _resp = _req.post(
+                            "https://api.anthropic.com/v1/messages",
+                            headers={"Content-Type":"application/json",
+                                     "x-api-key": load_anthropic_key(),
+                                     "anthropic-version":"2023-06-01"},
+                            json={"model":"claude-sonnet-4-20250514","max_tokens":600,
+                                  "system":"You are an expert NSE swing trading analyst. Always respond with valid JSON only. No markdown, no explanation outside JSON.",
+                                  "messages":[{"role":"user","content":_prompt}]},
+                            timeout=30)
+                        if _resp.status_code == 200:
+                            _raw = _resp.json()["content"][0]["text"].strip()
+                            _clean = _raw.replace("```json","").replace("```","").strip()
+                            st.session_state[_llm_res_key] = _json.loads(_clean)
+                        else:
+                            try:
+                                _err_ps = _resp.json().get("error",{}).get("message","Unknown")
+                            except Exception:
+                                _err_ps = _resp.text[:150]
+                            st.session_state[_llm_res_key] = {"verdict":"ERROR","confidence":"N/A",
+                                "reason":f"API {_resp.status_code}: {_err_ps}","main_risk":"N/A",
+                                "best_entry":"N/A","hold_target":"N/A","score_comment":"N/A"}
+                    except Exception as _ex:
+                        st.session_state[_llm_res_key] = {"verdict":"ERROR","confidence":"N/A",
+                            "reason":str(_ex)[:120],"main_risk":"N/A",
+                            "best_entry":"N/A","hold_target":"N/A","score_comment":"N/A"}
+
+            if _llm_res_key in st.session_state:
+                _lr  = st.session_state[_llm_res_key]
+                _v   = _lr.get("verdict","")
+                _c   = _lr.get("confidence","")
+                _vclr= "#15803d" if _v=="BUY" else "#d97706" if _v=="WAIT" else "#dc2626" if _v=="AVOID" else "#64748b"
+                _vbg = "#f0fdf4" if _v=="BUY" else "#fffbeb" if _v=="WAIT" else "#fef2f2" if _v=="AVOID" else "#f8fafc"
+                _vico= "✅" if _v=="BUY" else "⏳" if _v=="WAIT" else "❌" if _v=="AVOID" else "⚪"
+                _cbdge="🔥" if _c=="HIGH" else "📊" if _c=="MEDIUM" else "⚠️"
+                _r1  = _lr.get("main_risk","").replace("<","&lt;").replace(">","&gt;")
+                _r2  = _lr.get("best_entry","").replace("<","&lt;").replace(">","&gt;")
+                _r3  = _lr.get("hold_target","").replace("<","&lt;").replace(">","&gt;")
+                _r4  = _lr.get("reason","").replace("<","&lt;").replace(">","&gt;")
+                _r5  = _lr.get("score_comment","").replace("<","&lt;").replace(">","&gt;")
+                st.markdown(
+                    f"<div style=\'background:{_vbg};border:2px solid {_vclr}44;"
+                    f"border-radius:12px;padding:16px 18px;margin-bottom:8px\'>"
+                    f"<div style=\'display:flex;align-items:center;gap:10px;margin-bottom:10px\'>"
+                    f"<span style=\'font-size:20px;font-weight:900;color:{_vclr}\'>🤖 {_vico} {_v}</span>"
+                    f"<span style=\'background:{_vclr};color:white;font-size:11px;"
+                    f"font-weight:700;border-radius:6px;padding:3px 10px\'>{_cbdge} {_c} CONFIDENCE</span>"
+                    f"</div>"
+                    f"<div style=\'font-size:12px;color:#374151;line-height:1.7;margin-bottom:8px\'>"
+                    f"<b>📝 Analysis:</b> {_r4}</div>"
+                    f"<div style=\'display:flex;gap:10px;flex-wrap:wrap;font-size:11px\'>"
+                    f"<span style=\'background:white;border-radius:6px;padding:5px 10px;"
+                    f"border:1px solid {_vclr}33\'>⚠️ <b>Risk:</b> {_r1}</span>"
+                    f"<span style=\'background:white;border-radius:6px;padding:5px 10px;"
+                    f"border:1px solid {_vclr}33\'>🎯 <b>Entry:</b> {_r2}</span>"
+                    f"<span style=\'background:white;border-radius:6px;padding:5px 10px;"
+                    f"border:1px solid {_vclr}33\'>📈 <b>Target:</b> {_r3}</span>"
+                    f"</div>"
+                    f"<div style=\'font-size:11px;color:#64748b;margin-top:8px\'>📊 {_r5}</div>"
+                    f"</div>",
+                    unsafe_allow_html=True)
 
             # ── Paper Buy button ──────────────────────
             _ms_pb_key = f"ms_paper_{_sym}_{_sc}"
