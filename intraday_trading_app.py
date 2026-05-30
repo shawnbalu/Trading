@@ -1375,7 +1375,103 @@ def calc_supertrend(df, atr_period=7, multiplier=2.0):
 
 
 # ─────────────────────────────────────────────────────────────
-#  PRICE ACTION ANALYSIS — 3 Checks
+#  CONFIDENT SCORE — 100 point combined score
+#  Combines 6 key factors into one decisive number
+#  ≥ 80 = 🔥 CONFIDENT BUY  (enter without analysis)
+#  60-79 = ✅ GOOD           (check chart once then enter)
+#  40-59 = ⚠️ WEAK           (skip this week)
+#  < 40  = ❌ NOT SHOWN      (filtered out)
+# ─────────────────────────────────────────────────────────────
+
+def calc_confident_score(score, psar_bullish, hh, hl,
+                         entry_badge, rr_t2, liq_grade):
+    """
+    Calculate confident score out of 100.
+
+    COMPONENT 1 — Technical Score     (30 pts max)
+    COMPONENT 2 — PSAR Status         (25 pts max)
+    COMPONENT 3 — Structure HH+HL     (15 pts max)
+    COMPONENT 4 — Entry Badge         (15 pts max)
+    COMPONENT 5 — R:R Quality         (10 pts max)
+    COMPONENT 6 — Liquidity           ( 5 pts max)
+    """
+    # Component 1 — Technical score (normalised)
+    if   score >= 130: c1 = 30
+    elif score >= 120: c1 = 25
+    elif score >= 110: c1 = 20
+    elif score >= 100: c1 = 15
+    else:              c1 = 10
+
+    # Component 2 — PSAR status (most important)
+    # PSAR bearish = no entry regardless of other factors
+    c2 = 20 if psar_bullish else 0
+
+    # Component 3 — Price structure HH+HL
+    if   hh and hl: c3 = 15
+    elif hh or hl:  c3 = 8
+    else:           c3 = 0
+
+    # Component 4 — Entry badge (proximity to support)
+    if   entry_badge == 'ENTER NOW':  c4 = 15
+    elif entry_badge == 'ACCEPTABLE': c4 = 8
+    else:                             c4 = 0
+
+    # Component 5 — R:R quality
+    rr = float(rr_t2) if rr_t2 else 0
+    if   rr >= 3.0: c5 = 10
+    elif rr >= 2.0: c5 = 8
+    elif rr >= 1.5: c5 = 5
+    else:           c5 = 0
+
+    # Component 6 — Liquidity
+    if   liq_grade == 'EXCELLENT': c6 = 5
+    elif liq_grade == 'HIGH':      c6 = 3
+    elif liq_grade == 'MEDIUM':    c6 = 1
+    else:                          c6 = 0
+
+    total = c1 + c2 + c3 + c4 + c5 + c6
+
+    # Signal label
+    if   total >= 80:
+        signal = '🔥 CONFIDENT BUY'
+        clr    = '#15803d'
+        bg     = '#f0fdf4'
+        border = '#86efac'
+    elif total >= 60:
+        signal = '✅ GOOD SETUP'
+        clr    = '#16a34a'
+        bg     = '#dcfce7'
+        border = '#bbf7d0'
+    elif total >= 40:
+        signal = '⚠️ WEAK SETUP'
+        clr    = '#d97706'
+        bg     = '#fffbeb'
+        border = '#fde68a'
+    else:
+        signal = '❌ SKIP'
+        clr    = '#dc2626'
+        bg     = '#fef2f2'
+        border = '#fca5a5'
+
+    return {
+        'confident_score':  total,
+        'confident_signal': signal,
+        'confident_label':  signal,
+        'confident_clr':    clr,
+        'confident_bg':     bg,
+        'confident_bdr':    border,
+        'confident_border': border,
+        'c1_tech':          c1,
+        'c2_psar':          c2,
+        'c3_struct':        c3,
+        'c3_structure':     c3,
+        'c4_entry':         c4,
+        'c4_badge':         c4,
+        'c5_rr':            c5,
+        'c6_liq':           c6,
+    }
+
+
 #  Check 1: Weekly Candle Quality
 #  Check 2: Support Proximity
 #  Check 3: Price Structure
@@ -9535,6 +9631,95 @@ if _show_smaweekly:
             f"</div></div>",
             unsafe_allow_html=True)
 
+    # ─────────────────────────────────────────────────────
+    #  CONFIDENT SCORE — 100 point combined rating
+    #  Eliminates need for manual analysis after scan
+    #  ≥ 80 = 🔥 CONFIDENT BUY (enter without question)
+    #  60-79 = ✅ GOOD (quick chart check then enter)
+    #  < 60  = filtered out — not shown in results
+    # ─────────────────────────────────────────────────────
+    def calc_confident_score(r):
+        """
+        Calculate confident score from result dict.
+        Combines 6 factors into single 0-100 score.
+        Works for both Monthly Swing and SMA Weekly.
+        """
+        # ── Component 1: Technical Score (30 pts) ────────
+        sc = r.get('score', 0)
+        if   sc >= 130: c1 = 30
+        elif sc >= 120: c1 = 25
+        elif sc >= 110: c1 = 20
+        elif sc >= 100: c1 = 15
+        else:           c1 = 10
+
+        # ── Component 2: PSAR Status (25 pts) ────────────
+        # Most critical — no entry if PSAR bearish
+        psar_bull = r.get('psar_bullish', False)
+        if psar_bull:   c2 = 20
+        else:           c2 = 0   # PSAR bearish = kills confident score
+
+        # ── Component 3: Structure HH+HL (15 pts) ────────
+        hh = r.get('hh', False)
+        hl = r.get('hl', False)
+        if   hh and hl: c3 = 15
+        elif hh or hl:  c3 = 8
+        else:           c3 = 0
+
+        # ── Component 4: Entry Badge (15 pts) ─────────────
+        badge = r.get('entry_badge', 'ACCEPTABLE')
+        if   badge == 'ENTER NOW':   c4 = 15
+        elif badge == 'ACCEPTABLE':  c4 = 8
+        else:                        c4 = 0
+
+        # ── Component 5: R:R Quality (10 pts) ────────────
+        rr2 = r.get('rr_t2', r.get('RR_T2', 0))
+        try: rr2 = float(rr2)
+        except: rr2 = 0
+        if   rr2 >= 3.0: c5 = 10
+        elif rr2 >= 2.0: c5 = 8
+        elif rr2 >= 1.5: c5 = 5
+        else:            c5 = 0
+
+        # ── Component 6: Liquidity (5 pts) ───────────────
+        liq = r.get('liq_grade', r.get('Liquidity', ''))
+        if   liq == 'EXCELLENT': c6 = 5
+        elif liq == 'HIGH':      c6 = 3
+        elif liq == 'MEDIUM':    c6 = 1
+        else:                    c6 = 0
+
+        total = c1 + c2 + c3 + c4 + c5 + c6
+
+        # ── Signal label ──────────────────────────────────
+        if   total >= 80:
+            label = '🔥 CONFIDENT BUY'
+            clr   = '#15803d'
+            bg    = '#f0fdf4'
+            bdr   = '#86efac'
+        elif total >= 60:
+            label = '✅ GOOD SETUP'
+            clr   = '#1d4ed8'
+            bg    = '#eff6ff'
+            bdr   = '#93c5fd'
+        else:
+            label = '⚠️ WEAK'
+            clr   = '#d97706'
+            bg    = '#fffbeb'
+            bdr   = '#fcd34d'
+
+        return {
+            'confident_score': total,
+            'confident_label': label,
+            'confident_clr':   clr,
+            'confident_bg':    bg,
+            'confident_bdr':   bdr,
+            'c1_tech':   c1,
+            'c2_psar':   c2,
+            'c3_struct': c3,
+            'c4_badge':  c4,
+            'c5_rr':     c5,
+            'c6_liq':    c6,
+        }
+
     # ── Scan function ─────────────────────────────────────
     def scan_sma_weekly(stocks, capital, risk_pct, min_score, mode):
         """
@@ -9843,6 +10028,27 @@ if _show_smaweekly:
                 elif pct_above_sma50 > 10:
                     score -= 5    # mild penalty — slightly extended
 
+                # ── ENTRY BADGE — filter + classify ──────
+                # High ATR stocks need tighter proximity to SMA20
+                # ATR > 5%: max 3% above SMA20
+                # ATR ≤ 5%: max 5% above SMA20
+                _sw_atr_tight = _vol_atr_use > 5.0
+                _sw_max_prox  = 3.0 if _sw_atr_tight else 5.0
+
+                # Hard filter — hide if too extended
+                if pct_above_sma20 > _sw_max_prox:
+                    continue
+
+                # Assign entry badge
+                if _sw_atr_tight:
+                    # High ATR stock — tighter zones
+                    if   pct_above_sma20 <= 1.0: _entry_badge = 'ENTER NOW';  _entry_clr = '#15803d'; _entry_bg = '#f0fdf4'; _entry_ico = '🟢'
+                    else:                         _entry_badge = 'ACCEPTABLE'; _entry_clr = '#d97706'; _entry_bg = '#fffbeb'; _entry_ico = '🟡'
+                else:
+                    # Normal ATR stock
+                    if   pct_above_sma20 <= 2.0: _entry_badge = 'ENTER NOW';  _entry_clr = '#15803d'; _entry_bg = '#f0fdf4'; _entry_ico = '🟢'
+                    else:                         _entry_badge = 'ACCEPTABLE'; _entry_clr = '#d97706'; _entry_bg = '#fffbeb'; _entry_ico = '🟡'
+
                 # ── Volatility score adjustment ───────────
                 score += _vol_score
 
@@ -9980,6 +10186,10 @@ if _show_smaweekly:
                     'psar':         _sw_psar_val,
                     'psar_bullish': _sw_psar_bullish,
                     'pa':           _sw_pa,
+                    'entry_badge':  _entry_badge,
+                    'entry_clr':    _entry_clr,
+                    'entry_bg':     _entry_bg,
+                    'entry_ico':    _entry_ico,
                     'vol_atr_pct':  _vol_atr_use,
                     'vol_grade':    _vol_grade,
                     'vol_clr':      _vol_clr,
@@ -9994,6 +10204,9 @@ if _show_smaweekly:
                     'liq_turn': _liq_turn_str,
                     'src': src_lbl, 'mode': signal_type,
                 })
+                # Calculate confident score using local function
+                _cs = calc_confident_score(results[-1])
+                results[-1].update(_cs)
 
                 if len(results) % 5 == 0:
                     _stat_sw.markdown(
@@ -10005,12 +10218,15 @@ if _show_smaweekly:
                 continue
         _prog_sw.empty()
         _stat_sw.empty()
-        # Sort by: score × R:R at T2 (higher score AND higher return potential first)
-        # Normalise: score out of 100, rr_t2 typically 1–5
-        # Combined rank = score × rr_t2 → rewards both quality and return
+        # Sort by confident score (highest first)
+        # CONFIDENT BUY (≥80) always appears first
+        # Then GOOD SETUP (60-79)
+        # Within each group sorted by confident score
         for r in results:
-            r['_rank_score'] = round(r['score'] * r.get('rr_t2', 1.0), 1)
-        results.sort(key=lambda x: x['_rank_score'], reverse=True)
+            if 'confident_score' not in r:
+                _cs = calc_confident_score(r)
+                r.update(_cs)
+        results.sort(key=lambda x: x.get('confident_score', 0), reverse=True)
         return results
 
     _sw_run = st.button(
@@ -10080,6 +10296,13 @@ if _show_smaweekly:
             _sw_filtered = [r for r in _sw_results if r.get('signal_type') == 'both']
         else:
             _sw_filtered = _sw_results
+
+        # ── Sort by confident score (CONFIDENT BUY first) ─
+        _sw_filtered = sorted(
+            _sw_filtered,
+            key=lambda x: x.get('confident_score', 0),
+            reverse=True)
+
 
 
         # ── CSV Export — SMA Weekly ────────────────────
@@ -10292,14 +10515,29 @@ if _show_smaweekly:
             _cap_ico, _cap_name, _cap_clr, _cap_bg = CAP_TIER_BADGE.get(
                 _cap, ('🟠','Smallcap','#c2410c','#fff7ed'))
             _cap_border = _cap_clr + '44'
-            _sc_border  = _sc_clr + '33'
+
+            # ── Confident Score ───────────────────────
+            _conf       = _sw_r.get('confident_score', 0)
+            _conf_lbl   = _sw_r.get('confident_label', '⚠️ WEAK')
+            _conf_clr   = _sw_r.get('confident_clr',  '#d97706')
+            _conf_bg    = _sw_r.get('confident_bg',   '#fffbeb')
+            _conf_bdr   = _sw_r.get('confident_bdr',  '#fcd34d')
+            _c1         = _sw_r.get('c1_tech',   0)
+            _c2         = _sw_r.get('c2_psar',   0)
+            _c3         = _sw_r.get('c3_struct', 0)
+            _c4         = _sw_r.get('c4_badge',  0)
+            _c5         = _sw_r.get('c5_rr',     0)
+            _c6         = _sw_r.get('c6_liq',    0)
+
+            # Card border = confident score colour
+            _sc_border  = _conf_bdr
 
             # Weekly change colour
             _wchg_clr = '#15803d' if _wchg >= 0 else '#dc2626'
 
             # ── Card wrapper open ──────────────────────
             st.markdown(
-                f"<div style='background:#ffffff;border:1.5px solid {_sc_border};"
+                f"<div style='background:#ffffff;border:2px solid {_sc_border};"
                 f"border-radius:16px;padding:18px 20px;margin-bottom:12px;'>",
                 unsafe_allow_html=True)
 
@@ -10311,9 +10549,14 @@ if _show_smaweekly:
                 <div>
                     <div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'>
                         <span style='font-size:22px;font-weight:800;color:#1a2035'>{_sym}</span>
-                        <span style='background:{_sc_bg};color:{_sc_clr};font-size:11px;
-                                     font-weight:700;border-radius:6px;padding:3px 10px'>
-                            Score {_sc}/100 · Rank {_rk:.0f}
+                        <span style='background:{_conf_bg};color:{_conf_clr};font-size:13px;
+                                     font-weight:800;border-radius:8px;padding:4px 12px;
+                                     border:2px solid {_conf_bdr}'>
+                            ⭐ {_conf}/100 · {_conf_lbl}
+                        </span>
+                        <span style='background:{_sc_bg};color:{_sc_clr};font-size:10px;
+                                     font-weight:700;border-radius:6px;padding:2px 8px'>
+                            Scanner {_sc}/100
                         </span>
                         <span style='background:{_cap_bg};color:{_cap_clr};font-size:10px;
                                      font-weight:700;border-radius:4px;padding:2px 8px;
@@ -10330,6 +10573,12 @@ if _show_smaweekly:
                                      font-weight:700;border-radius:4px;padding:2px 8px;
                                      border:1px solid {_sw_r.get("vol_clr","#64748b")}44'>
                             {_sw_r.get("vol_ico","⚪")} Vol {_sw_r.get("vol_atr_pct",0):.1f}% {_sw_r.get("vol_grade","")}
+                        </span>
+                        <span style='background:{_sw_r.get("entry_bg","#fffbeb")};
+                                     color:{_sw_r.get("entry_clr","#d97706")};font-size:10px;
+                                     font-weight:700;border-radius:4px;padding:2px 8px;
+                                     border:1px solid {_sw_r.get("entry_clr","#d97706")}44'>
+                            {_sw_r.get("entry_ico","🟡")} {_sw_r.get("entry_badge","ACCEPTABLE")}
                         </span>
                     </div>
                     <div style='font-size:12px;color:#64748b;margin-top:5px'>
@@ -10444,6 +10693,54 @@ if _show_smaweekly:
                 <span>🎯 Capital: <b style='color:#1a2035'>₹{_sw_capital:,.0f}</b></span>
                 <span>📊 Risk: <b style='color:#1a2035'>{_sw_risk_pct}%</b></span>
             </div>""", unsafe_allow_html=True)
+
+            # ── Confident Score Breakdown Strip ─────────────
+            st.markdown(
+                f"<div style='background:{_conf_bg};border:2px solid {_conf_bdr};"
+                f"border-radius:10px;padding:10px 16px;margin-bottom:8px'>"
+                f"<div style='display:flex;align-items:center;justify-content:space-between;"
+                f"flex-wrap:wrap;gap:8px'>"
+                f"<div>"
+                f"<div style='font-size:11px;font-weight:700;color:{_conf_clr};"
+                f"letter-spacing:1px'>⭐ CONFIDENT SCORE</div>"
+                f"<div style='font-size:22px;font-weight:800;color:{_conf_clr};"
+                f"margin-top:2px'>{_conf}/100 "
+                f"<span style='font-size:13px'>{_conf_lbl}</span></div>"
+                f"</div>"
+                f"<div style='display:flex;gap:6px;flex-wrap:wrap'>"
+                f"<div style='background:white;border-radius:6px;padding:4px 8px;"
+                f"text-align:center;min-width:44px'>"
+                f"<div style='font-size:8px;color:#94a3b8;font-weight:700'>TECH</div>"
+                f"<div style='font-size:13px;font-weight:800;color:#1a2035'>{_c1}/30</div>"
+                f"</div>"
+                f"<div style='background:white;border-radius:6px;padding:4px 8px;"
+                f"text-align:center;min-width:44px'>"
+                f"<div style='font-size:8px;color:#94a3b8;font-weight:700'>PSAR</div>"
+                f"<div style='font-size:13px;font-weight:800;"
+                f"color:{'#15803d' if _c2>0 else '#dc2626'}'>{_c2}/25</div>"
+                f"</div>"
+                f"<div style='background:white;border-radius:6px;padding:4px 8px;"
+                f"text-align:center;min-width:44px'>"
+                f"<div style='font-size:8px;color:#94a3b8;font-weight:700'>HH+HL</div>"
+                f"<div style='font-size:13px;font-weight:800;color:#1a2035'>{_c3}/15</div>"
+                f"</div>"
+                f"<div style='background:white;border-radius:6px;padding:4px 8px;"
+                f"text-align:center;min-width:44px'>"
+                f"<div style='font-size:8px;color:#94a3b8;font-weight:700'>ENTRY</div>"
+                f"<div style='font-size:13px;font-weight:800;color:#1a2035'>{_c4}/15</div>"
+                f"</div>"
+                f"<div style='background:white;border-radius:6px;padding:4px 8px;"
+                f"text-align:center;min-width:44px'>"
+                f"<div style='font-size:8px;color:#94a3b8;font-weight:700'>R:R</div>"
+                f"<div style='font-size:13px;font-weight:800;color:#1a2035'>{_c5}/10</div>"
+                f"</div>"
+                f"<div style='background:white;border-radius:6px;padding:4px 8px;"
+                f"text-align:center;min-width:44px'>"
+                f"<div style='font-size:8px;color:#94a3b8;font-weight:700'>LIQ</div>"
+                f"<div style='font-size:13px;font-weight:800;color:#1a2035'>{_c6}/5</div>"
+                f"</div>"
+                f"</div></div></div>",
+                unsafe_allow_html=True)
 
             # ── Price Action Analysis Strip ─────────────────
             _sw_pa_data = _sw_r.get('pa', {})
@@ -10606,6 +10903,34 @@ if _show_smaweekly:
 # ─────────────────────────────────────────────────────────────
 
 if _show_monthlyswing:
+
+    # ── Local confident score function (dict-based) ────
+    def calc_confident_score(r):
+        sc    = r.get('score', 0)
+        if   sc >= 130: c1 = 30
+        elif sc >= 120: c1 = 25
+        elif sc >= 110: c1 = 20
+        elif sc >= 100: c1 = 15
+        else:           c1 = 10
+        c2 = 20 if r.get('psar_bullish', False) else 0
+        hh = r.get('hh', False); hl = r.get('hl', False)
+        c3 = 15 if (hh and hl) else (8 if (hh or hl) else 0)
+        badge = r.get('entry_badge', 'ACCEPTABLE')
+        c4 = 15 if badge == 'ENTER NOW' else (8 if badge == 'ACCEPTABLE' else 0)
+        rr2 = r.get('rr_t2', r.get('rr2', 0))
+        try: rr2 = float(rr2)
+        except: rr2 = 0
+        c5 = 10 if rr2 >= 3.0 else (8 if rr2 >= 2.0 else (5 if rr2 >= 1.5 else 0))
+        liq = r.get('liq_grade', '')
+        c6 = 5 if liq == 'EXCELLENT' else (3 if liq == 'HIGH' else (1 if liq == 'MEDIUM' else 0))
+        total = c1 + c2 + c3 + c4 + c5 + c6
+        if   total >= 80: label='🔥 CONFIDENT BUY'; clr='#15803d'; bg='#f0fdf4'; bdr='#86efac'
+        elif total >= 60: label='✅ GOOD SETUP';    clr='#1d4ed8'; bg='#eff6ff'; bdr='#93c5fd'
+        elif total >= 40: label='⚠️ WEAK SETUP';    clr='#d97706'; bg='#fffbeb'; bdr='#fcd34d'
+        else:             label='❌ SKIP';           clr='#dc2626'; bg='#fef2f2'; bdr='#fca5a5'
+        return {'confident_score':total,'confident_label':label,'confident_clr':clr,
+                'confident_bg':bg,'confident_bdr':bdr,
+                'c1_tech':c1,'c2_psar':c2,'c3_struct':c3,'c4_badge':c4,'c5_rr':c5,'c6_liq':c6}
 
     # ── Data source badge ──────────────────────────────
     _ms_kite = get_kite_client() is not None
@@ -11012,7 +11337,26 @@ if _show_monthlyswing:
                 if last3_red:             continue
                 recovering = c0>c1 or c0>o0
                 if not recovering:        continue
-                if pct_above20>5:         continue
+
+                # ── ENTRY BADGE — filter + classify ───────
+                # High ATR stocks (>5%) need tighter SMA20 proximity
+                # because their natural weekly move can eat SL easily
+                _ms_atr_tight = _wk_atr_pct > 5.0
+                _ms_max_prox  = 3.0 if _ms_atr_tight else 5.0
+
+                # Hard filter — hide if too extended
+                if pct_above20 > _ms_max_prox:
+                    continue
+
+                # Assign entry badge
+                if _ms_atr_tight:
+                    # High ATR — tighter zones
+                    if   pct_above20 <= 1.0: _ms_entry_badge = 'ENTER NOW';  _ms_entry_clr = '#15803d'; _ms_entry_bg = '#f0fdf4'; _ms_entry_ico = '🟢'
+                    else:                    _ms_entry_badge = 'ACCEPTABLE'; _ms_entry_clr = '#d97706'; _ms_entry_bg = '#fffbeb'; _ms_entry_ico = '🟡'
+                else:
+                    # Normal ATR — standard zones
+                    if   pct_above20 <= 2.0: _ms_entry_badge = 'ENTER NOW';  _ms_entry_clr = '#15803d'; _ms_entry_bg = '#f0fdf4'; _ms_entry_ico = '🟢'
+                    else:                    _ms_entry_badge = 'ACCEPTABLE'; _ms_entry_clr = '#d97706'; _ms_entry_bg = '#fffbeb'; _ms_entry_ico = '🟡'
 
                 # Fibonacci gate: reject if retrace > 78.6% (trend broken)
                 # or retrace < 15% (not pulled back enough — near high)
@@ -11395,6 +11739,10 @@ if _show_monthlyswing:
                     'psar':         _psar_val,
                     'psar_bullish': _psar_bullish,
                     'pa':           _pa,
+                    'entry_badge':  _ms_entry_badge,
+                    'entry_clr':    _ms_entry_clr,
+                    'entry_bg':     _ms_entry_bg,
+                    'entry_ico':    _ms_entry_ico,
                     'vol_atr_pct':  _wk_atr_pct,
                     'vol_grade':    _ms_vol_grade,
                     'vol_clr':      _ms_vol_clr,
@@ -11421,6 +11769,9 @@ if _show_monthlyswing:
                     'results_season': _results_season,
                     'nifty_bullish': _nifty_bullish,
                 })
+                # Calculate confident score
+                _ms_cs = calc_confident_score(results[-1])
+                results[-1].update(_ms_cs)
 
                 if len(results)%3==0:
                     _stat_ms.markdown(
@@ -11432,7 +11783,12 @@ if _show_monthlyswing:
                 continue  # silent — don't break scan for one bad stock
 
         _prog_ms.empty(); _stat_ms.empty()
-        results.sort(key=lambda x: x['_rank'], reverse=True)
+        # Sort by confident score (CONFIDENT BUY first)
+        for r in results:
+            if 'confident_score' not in r:
+                _ms_cs2 = calc_confident_score(r)
+                r.update(_ms_cs2)
+        results.sort(key=lambda x: x.get('confident_score', 0), reverse=True)
         return results
     # ── Scan button ────────────────────────────────────
     _ms_run = st.button(
@@ -11507,6 +11863,13 @@ if _show_monthlyswing:
             _ms_show = [r for r in _ms_results if r.get('is_breakout')]
         else:
             _ms_show = _ms_results
+
+        # ── Sort by confident score (CONFIDENT BUY first) ─
+        _ms_show = sorted(
+            _ms_show,
+            key=lambda x: x.get('confident_score', 0),
+            reverse=True)
+
 
         # ── CSV Export — Monthly Swing ─────────────────
         def _ms_to_csv(results):
@@ -11935,15 +12298,39 @@ if _show_monthlyswing:
             _ms_r_vol_pct   = _ms_r.get('vol_atr_pct', 0)
             _ms_r_vol_clr   = _ms_r.get('vol_clr','#64748b')
             _ms_r_vol_bg    = _ms_r.get('vol_bg','#f8fafc')
+            _ms_r_eb_ico    = _ms_r.get('entry_ico','🟡')
+            _ms_r_eb_badge  = _ms_r.get('entry_badge','ACCEPTABLE')
+            _ms_r_eb_clr    = _ms_r.get('entry_clr','#d97706')
+            _ms_r_eb_bg     = _ms_r.get('entry_bg','#fffbeb')
+
+            # ── Confident Score ───────────────────────
+            _ms_conf     = _ms_r.get('confident_score', 0)
+            _ms_conf_lbl = _ms_r.get('confident_label', '⚠️ WEAK')
+            _ms_conf_clr = _ms_r.get('confident_clr',  '#d97706')
+            _ms_conf_bg  = _ms_r.get('confident_bg',   '#fffbeb')
+            _ms_conf_bdr = _ms_r.get('confident_bdr',  '#fcd34d')
+            _ms_c1       = _ms_r.get('c1_tech',   0)
+            _ms_c2       = _ms_r.get('c2_psar',   0)
+            _ms_c3       = _ms_r.get('c3_struct', 0)
+            _ms_c4       = _ms_r.get('c4_badge',  0)
+            _ms_c5       = _ms_r.get('c5_rr',     0)
+            _ms_c6       = _ms_r.get('c6_liq',    0)
+
             _hdr = (
+                f"<div style='background:#ffffff;border:2px solid {_ms_conf_bdr};"
+                "border-radius:16px;padding:18px 20px;margin-bottom:12px'>"
                 "<div style='display:flex;justify-content:space-between;"
                 "align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:12px'>"
                 "<div>"
                 "<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'>"
                 f"<span style='font-size:22px;font-weight:800;color:#1a2035'>{_sym}</span>"
-                f"<span style='background:{_sc_bg};color:{_sc_clr};font-size:11px;"
-                f"font-weight:700;border-radius:6px;padding:3px 10px'>"
-                f"Score {_sc}/100 \u00b7 Rank {_rk:.0f}</span>"
+                f"<span style='background:{_ms_conf_bg};color:{_ms_conf_clr};font-size:13px;"
+                f"font-weight:800;border-radius:8px;padding:4px 12px;"
+                f"border:2px solid {_ms_conf_bdr}'>"
+                f"⭐ {_ms_conf}/100 · {_ms_conf_lbl}</span>"
+                f"<span style='background:{_sc_bg};color:{_sc_clr};font-size:10px;"
+                f"font-weight:700;border-radius:6px;padding:2px 8px'>"
+                f"Scanner {_sc}/100</span>"
                 f"{_ai_badge_html}"
                 f"<span style='background:{_cap_bg};color:{_cap_clr};font-size:10px;"
                 f"font-weight:700;border-radius:4px;padding:2px 8px;"
@@ -11955,6 +12342,10 @@ if _show_monthlyswing:
                 f"font-weight:700;border-radius:4px;padding:2px 8px;"
                 f"border:1px solid {_ms_r_vol_clr}44'>"
                 f"{_ms_r_vol_ico} Vol {_ms_r_vol_pct:.1f}% {_ms_r_vol_grade}</span>"
+                f"<span style='background:{_ms_r_eb_bg};color:{_ms_r_eb_clr};font-size:10px;"
+                f"font-weight:700;border-radius:4px;padding:2px 8px;"
+                f"border:1px solid {_ms_r_eb_clr}44'>"
+                f"{_ms_r_eb_ico} {_ms_r_eb_badge}</span>"
                 "</div>"
                 f"<div style='font-size:12px;color:#64748b;margin-top:6px'>"
                 f"<span style='color:#7c3aed;font-weight:700'>{_slab}</span>"
@@ -12082,6 +12473,54 @@ if _show_monthlyswing:
                 <span>📊 Risk: <b style='color:#1a2035'>{_ms_risk}%</b></span>
                 <span>⏳ Hold: <b style='color:#7c3aed'>3–5 weeks</b></span>
             </div>""", unsafe_allow_html=True)
+
+            # ── Confident Score Breakdown Strip ──────────
+            st.markdown(
+                f"<div style='background:{_ms_conf_bg};border:2px solid {_ms_conf_bdr};"
+                f"border-radius:10px;padding:10px 16px;margin-bottom:8px'>"
+                f"<div style='display:flex;align-items:center;justify-content:space-between;"
+                f"flex-wrap:wrap;gap:8px'>"
+                f"<div>"
+                f"<div style='font-size:11px;font-weight:700;color:{_ms_conf_clr};"
+                f"letter-spacing:1px'>⭐ CONFIDENT SCORE</div>"
+                f"<div style='font-size:22px;font-weight:800;color:{_ms_conf_clr};"
+                f"margin-top:2px'>{_ms_conf}/100 "
+                f"<span style='font-size:13px'>{_ms_conf_lbl}</span></div>"
+                f"</div>"
+                f"<div style='display:flex;gap:6px;flex-wrap:wrap'>"
+                f"<div style='background:white;border-radius:6px;padding:4px 8px;"
+                f"text-align:center;min-width:44px'>"
+                f"<div style='font-size:8px;color:#94a3b8;font-weight:700'>TECH</div>"
+                f"<div style='font-size:13px;font-weight:800;color:#1a2035'>{_ms_c1}/30</div>"
+                f"</div>"
+                f"<div style='background:white;border-radius:6px;padding:4px 8px;"
+                f"text-align:center;min-width:44px'>"
+                f"<div style='font-size:8px;color:#94a3b8;font-weight:700'>PSAR</div>"
+                f"<div style='font-size:13px;font-weight:800;"
+                f"color:{'#15803d' if _ms_c2>0 else '#dc2626'}'>{_ms_c2}/25</div>"
+                f"</div>"
+                f"<div style='background:white;border-radius:6px;padding:4px 8px;"
+                f"text-align:center;min-width:44px'>"
+                f"<div style='font-size:8px;color:#94a3b8;font-weight:700'>HH+HL</div>"
+                f"<div style='font-size:13px;font-weight:800;color:#1a2035'>{_ms_c3}/15</div>"
+                f"</div>"
+                f"<div style='background:white;border-radius:6px;padding:4px 8px;"
+                f"text-align:center;min-width:44px'>"
+                f"<div style='font-size:8px;color:#94a3b8;font-weight:700'>ENTRY</div>"
+                f"<div style='font-size:13px;font-weight:800;color:#1a2035'>{_ms_c4}/15</div>"
+                f"</div>"
+                f"<div style='background:white;border-radius:6px;padding:4px 8px;"
+                f"text-align:center;min-width:44px'>"
+                f"<div style='font-size:8px;color:#94a3b8;font-weight:700'>R:R</div>"
+                f"<div style='font-size:13px;font-weight:800;color:#1a2035'>{_ms_c5}/10</div>"
+                f"</div>"
+                f"<div style='background:white;border-radius:6px;padding:4px 8px;"
+                f"text-align:center;min-width:44px'>"
+                f"<div style='font-size:8px;color:#94a3b8;font-weight:700'>LIQ</div>"
+                f"<div style='font-size:13px;font-weight:800;color:#1a2035'>{_ms_c6}/5</div>"
+                f"</div>"
+                f"</div></div></div>",
+                unsafe_allow_html=True)
 
             # ── Price Action Analysis Strip ────────────
             _pa_data = _ms_r.get('pa', {})
