@@ -1167,6 +1167,193 @@ div[data-testid="stSidebar"] .stButton > button {
 """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
+#  F&O STOCK LIST + EXPIRY FUNCTIONS
+#  ~180 NSE F&O listed stocks
+#  Used to detect expiry pinning risk
+#  Near expiry: F&O stocks get penalty
+#  Non-F&O stocks get bonus
+# ─────────────────────────────────────────────
+
+FNO_STOCKS = {
+    # Nifty 50
+    'ADANIENT','ADANIPORTS','APOLLOHOSP','ASIANPAINT','AXISBANK',
+    'BAJAJ-AUTO','BAJFINANCE','BAJAJFINSV','BPCL','BHARTIARTL',
+    'BRITANNIA','CIPLA','COALINDIA','DIVISLAB','DRREDDY',
+    'EICHERMOT','GRASIM','HCLTECH','HDFCBANK','HDFCLIFE',
+    'HEROMOTOCO','HINDALCO','HINDUNILVR','ICICIBANK','ITC',
+    'INDUSINDBK','INFY','JSWSTEEL','KOTAKBANK','LT',
+    'LTIM','M&M','MARUTI','NESTLEIND','NTPC',
+    'ONGC','POWERGRID','RELIANCE','SBILIFE','SBIN',
+    'SUNPHARMA','TCS','TATACONSUM','TATAMOTORS','TATASTEEL',
+    'TECHM','TITAN','TRENT','ULTRACEMCO','WIPRO',
+    # Nifty Next 50 + popular F&O
+    'ABB','ABBOTINDIA','ABCAPITAL','ABFRL','ACC',
+    'ADANIENSOL','ADANIGREEN','ADANIPOWER','ALKEM','AMBUJACEM',
+    'AUROPHARMA','BANDHANBNK','BANKBARODA','BEL','BERGEPAINT',
+    'BIOCON','BOSCHLTD','CANBK','CHOLAFIN','COLPAL',
+    'CONCOR','COROMANDEL','CROMPTON','CUMMINSIND','DLF',
+    'DABUR','DALBHARAT','DEEPAKNTR','ESCORTS','FEDERALBNK',
+    'GAIL','GODREJCP','GODREJPROP','GRANULES','HAVELLS',
+    'HAL','HFCL','HINDCOPPER','HINDZINC','IDFCFIRSTB',
+    'INDHOTEL','INDIAMART','INDUSTOWER','IRCTC','IRFC',
+    'JINDALSTEL','JUBLFOOD','L&TFH','LALPATHLAB','LICHSGFIN',
+    'LUPIN','MANAPPURAM','MARICO','MCDOWELL-N','MCX',
+    'MFSL','MGL','MOTHERSON','MPHASIS','MRF',
+    'MUTHOOTFIN','NAUKRI','NMDC','OBEROIRLTY','OFSS',
+    'PAGEIND','PEL','PETRONET','PFC','PIDILITIND',
+    'PIIND','PNB','POLYCAB','PVR','RAMCOCEM',
+    'RBLBANK','RECLTD','SAIL','SHREECEM','SIEMENS',
+    'SRF','SUNPHARMA','SUNTV','SUZLON','TATACOMM',
+    'TATAELXSI','TATAINVEST','TATAPOWER','TTML','UBL',
+    'UNIONBANK','UPL','VEDL','VOLTAS','WHIRLPOOL',
+    'ZEEL','ZOMATO','NYKAA','PAYTM','DMART',
+    'POLICYBZR','INDIGO','SPICEJET','IDEALREALTY','LODHA',
+    'PRESTIGE','SOBHA','PHOENIXLTD','BRIGADE','MAHLIFE',
+    'AARTIIND','ATUL','CASTROLIND','CHAMBLFERT','COFORGE',
+    'CYIENT','DIXON','EMAMILTD','FINEORG','GLENMARK',
+    'GNFC','GSPL','HAPPSTMNDS','IPCALAB','JKCEMENT',
+    'JUBLINGREA','KPITTECH','LAURUSLABS','METROPOLIS','NAM-INDIA',
+    'NATCOPHARM','NAVINFLUOR','NLCINDIA','PERSISTENT','PFIZER',
+    'RAIN','ROUTE','SEQUENT','SOLARINDS','STAR',
+    'SYNGENE','THERMAX','TTKPRESTIG','VGUARD','VBL',
+    'ZYDUSLIFE','360ONE','ASTRAL','AARVIIND','CESC',
+}
+
+def get_monthly_expiry(dt=None):
+    """
+    Returns the last Thursday of the current/next month.
+    If today is past this month's expiry, returns next month's.
+    """
+    import calendar
+    from datetime import date, timedelta
+
+    if dt is None:
+        dt = ist_now().date()
+
+    # Find last Thursday of current month
+    year, month = dt.year, dt.month
+    last_day = calendar.monthrange(year, month)[1]
+    last_date = date(year, month, last_day)
+
+    # Walk back to Thursday (weekday 3)
+    while last_date.weekday() != 3:
+        last_date -= timedelta(days=1)
+
+    # If today is past this month's expiry use next month
+    if dt > last_date:
+        if month == 12:
+            year, month = year + 1, 1
+        else:
+            month += 1
+        last_day = calendar.monthrange(year, month)[1]
+        last_date = date(year, month, last_day)
+        while last_date.weekday() != 3:
+            last_date -= timedelta(days=1)
+
+    return last_date
+
+
+def days_to_expiry():
+    """Returns calendar days to next monthly expiry."""
+    from datetime import date
+    today    = ist_now().date()
+    expiry   = get_monthly_expiry(today)
+    return (expiry - today).days
+
+
+def get_expiry_zone(dte=None):
+    """
+    Classify the expiry proximity zone.
+
+    FRESH   (post expiry 0-3 days) → best entry window
+    SAFE    (≥ 15 days)            → enter freely
+    CAUTION (8-14 days)            → prefer non-F&O
+    DANGER  (1-7 days)             → avoid F&O stocks
+    """
+    if dte is None:
+        dte = days_to_expiry()
+
+    if   dte <= 0:  return 'FRESH'    # post expiry
+    elif dte <= 7:  return 'DANGER'   # expiry week
+    elif dte <= 14: return 'CAUTION'  # second half
+    else:           return 'SAFE'     # first half
+
+
+def get_fno_info(sym_clean, dte=None):
+    """
+    Returns F&O status, zone and confident score penalty.
+    sym_clean = symbol without .NS suffix
+
+    Returns dict:
+        is_fno, expiry_zone, days_to_exp,
+        fno_penalty, fno_badge, fno_clr,
+        fno_bg, fno_bdr, fno_note
+    """
+    if dte is None:
+        dte = days_to_expiry()
+
+    is_fno = sym_clean.upper() in FNO_STOCKS
+    zone   = get_expiry_zone(dte)
+
+    # ── Penalty / Bonus ───────────────────────────
+    if is_fno:
+        if   zone == 'DANGER':  penalty = -15  # expiry week
+        elif zone == 'CAUTION': penalty = -8   # second half
+        elif zone == 'FRESH':   penalty = +5   # post expiry
+        else:                   penalty =  0   # safe zone
+    else:
+        # Non-F&O gets bonus near expiry (moves freely)
+        if   zone == 'DANGER':  penalty = +10
+        elif zone == 'CAUTION': penalty = +5
+        elif zone == 'FRESH':   penalty = +5
+        else:                   penalty =  0
+
+    # ── Badge display ─────────────────────────────
+    if is_fno:
+        if   zone == 'DANGER':
+            badge = f'📌 F&O · {dte}d to expiry'
+            clr   = '#dc2626'; bg = '#fef2f2'; bdr = '#fca5a5'
+            note  = '⚠️ Expiry week — price may be pinned'
+        elif zone == 'CAUTION':
+            badge = f'📌 F&O · {dte}d to expiry'
+            clr   = '#d97706'; bg = '#fffbeb'; bdr = '#fde68a'
+            note  = '⚠️ Second half — reduce size, prefer non-F&O'
+        elif zone == 'FRESH':
+            badge = f'📌 F&O · Post expiry'
+            clr   = '#15803d'; bg = '#f0fdf4'; bdr = '#86efac'
+            note  = '✅ Post expiry — fresh cycle, enter freely'
+        else:
+            badge = f'📌 F&O · {dte}d to expiry'
+            clr   = '#1d4ed8'; bg = '#eff6ff'; bdr = '#93c5fd'
+            note  = '✅ Safe zone — normal movement expected'
+    else:
+        if   zone in ('DANGER', 'CAUTION'):
+            badge = f'✅ Non-F&O · {dte}d to expiry'
+            clr   = '#15803d'; bg = '#f0fdf4'; bdr = '#86efac'
+            note  = '✅ Not pinned by expiry — moves freely'
+        elif zone == 'FRESH':
+            badge = '✅ Non-F&O · Post expiry'
+            clr   = '#15803d'; bg = '#f0fdf4'; bdr = '#86efac'
+            note  = '✅ Best entry window — fresh cycle'
+        else:
+            badge = '✅ Non-F&O'
+            clr   = '#64748b'; bg = '#f8fafc'; bdr = '#e2e8f0'
+            note  = ''
+
+    return {
+        'is_fno':      is_fno,
+        'expiry_zone': zone,
+        'days_to_exp': dte,
+        'fno_penalty': penalty,
+        'fno_badge':   badge,
+        'fno_clr':     clr,
+        'fno_bg':      bg,
+        'fno_bdr':     bdr,
+        'fno_note':    note,
+    }
+
+
+# ─────────────────────────────────────────────
 #  STOCK UNIVERSE
 # ─────────────────────────────────────────────
 # ── Tier 1: Nifty 50 — EXCELLENT liquidity, highest institutional activity ──
@@ -1432,17 +1619,19 @@ def calc_confident_score(score, psar_bullish, hh, hl,
     total = c1 + c2 + c3 + c4 + c5 + c6
 
     # Signal label
-    if   total >= 80:
+    if   total >= 130:
         signal = '🔥 CONFIDENT BUY'
         clr    = '#15803d'
         bg     = '#f0fdf4'
         border = '#86efac'
-    elif total >= 60:
-        signal = '✅ GOOD SETUP'
+    elif total >= 100:
+        signal = '✅ STRONG SETUP'
+    elif total >= 75:
+        signal = '👍 GOOD SETUP'
         clr    = '#16a34a'
         bg     = '#dcfce7'
         border = '#bbf7d0'
-    elif total >= 40:
+    elif total >= 55:
         signal = '⚠️ WEAK SETUP'
         clr    = '#d97706'
         bg     = '#fffbeb'
@@ -2314,6 +2503,1254 @@ def get_nifty_market_state(kite=None):
     return result
 
 
+# ─────────────────────────────────────────────────────────────
+#  NIFTY SWING STATE — Weekly/Daily SMA-based
+#  Different from intraday get_nifty_market_state()
+#  Used by Monthly Swing and SMA Weekly scanners
+#  Based on SMA20 vs SMA50 (not intraday % change)
+# ─────────────────────────────────────────────────────────────
+
+def get_nifty_swing_state(timeframe='weekly'):
+    """
+    Returns Nifty state for swing trading decisions.
+
+    timeframe='weekly' → for Monthly Swing (weekly candles)
+    timeframe='daily'  → for SMA Weekly (daily candles)
+
+    Returns dict:
+        state:    BULLISH / CAUTION / BEARISH / UNKNOWN
+        close:    last close
+        sma20:    SMA20 value
+        sma50:    SMA50 value
+        slope:    SMA20 5-period slope %
+        pct_from_sma20: % distance from SMA20
+        vix:      India VIX
+        vix_level: CALM/NORMAL/ELEVATED/HIGH/EXTREME/CRISIS
+    """
+    result = {
+        'state':          'UNKNOWN',
+        'close':          0.0,
+        'sma20':          0.0,
+        'sma50':          0.0,
+        'slope':          0.0,
+        'pct_from_sma20': 0.0,
+        'vix':            None,
+        'vix_level':      'UNKNOWN',
+        'timeframe':      timeframe,
+    }
+    try:
+        interval = '1wk' if timeframe == 'weekly' else '1d'
+        period   = '2y'  if timeframe == 'weekly' else '6mo'
+
+        _cache_key = f'nifty_swing_{timeframe}'
+        import time as _time_mod
+        if _cache_key in _DATA_CACHE:
+            _cached, _cached_ts = _DATA_CACHE[_cache_key]
+            if _time_mod.time() - _cached_ts < 3600:  # cache 1 hour
+                return _cached
+
+        nf  = yf.Ticker('^NSEI')
+        df  = nf.history(period=period, interval=interval,
+                         auto_adjust=True, actions=False)
+        if df is None or len(df) < 25:
+            return result
+
+        df.columns = [c.split(' ')[0] if ' ' in str(c) else c for c in df.columns]
+        df['SMA20'] = df['Close'].rolling(20).mean()
+        df['SMA50'] = df['Close'].rolling(50).mean()
+        df = df.dropna()
+
+        close = float(df['Close'].iloc[-1])
+        sma20 = float(df['SMA20'].iloc[-1])
+        sma50 = float(df['SMA50'].iloc[-1])
+
+        # SMA20 slope (5-period)
+        sma20_prev = float(df['SMA20'].iloc[-6]) if len(df) >= 6 else sma20
+        slope = round((sma20 - sma20_prev) / sma20_prev * 100, 3) if sma20_prev > 0 else 0
+
+        pct_from_sma20 = round((close - sma20) / sma20 * 100, 2) if sma20 > 0 else 0
+
+        result['close']          = round(close, 2)
+        result['sma20']          = round(sma20, 2)
+        result['sma50']          = round(sma50, 2)
+        result['slope']          = slope
+        result['pct_from_sma20'] = pct_from_sma20
+
+        # State classification — 5 states including LATE_BULL transition
+        if close > sma20 > sma50 and slope > 0.3:
+            result['state'] = 'BULLISH'    # ✅ strong uptrend
+        elif close > sma20 > sma50 and slope <= 0.3:
+            result['state'] = 'LATE_BULL'  # ⚠️ trend flattening — transition warning
+        elif close > sma20 and sma20 > sma50:
+            result['state'] = 'LATE_BULL'  # ⚠️ above MAs but slope flat
+        elif close > sma20:
+            result['state'] = 'CAUTION'    # ⚠️ half size
+        elif close > sma50:
+            result['state'] = 'CAUTION'    # ⚠️ weak — watch
+        else:
+            result['state'] = 'BEARISH'    # ❌ no new entries
+
+        # VIX
+        try:
+            vf = yf.Ticker('^INDIAVIX')
+            vdf = vf.history(period='5d', interval='1d',
+                             auto_adjust=True, actions=False)
+            if vdf is not None and len(vdf) > 0:
+                vdf.columns = [c.split(' ')[0] if ' ' in str(c) else c for c in vdf.columns]
+                vix = float(vdf['Close'].iloc[-1])
+                result['vix'] = round(vix, 2)
+                if   vix < 13: result['vix_level'] = 'CALM'
+                elif vix < 16: result['vix_level'] = 'NORMAL'
+                elif vix < 20: result['vix_level'] = 'ELEVATED'
+                elif vix < 25: result['vix_level'] = 'HIGH'
+                elif vix < 30: result['vix_level'] = 'EXTREME'
+                else:          result['vix_level'] = 'CRISIS'
+        except Exception:
+            pass
+
+        _DATA_CACHE[_cache_key] = (result, _time_mod.time())
+
+    except Exception:
+        pass
+
+    return result
+
+
+# ─────────────────────────────────────────────────────────────
+#  BETA CALCULATION
+#  Calculates stock beta vs Nifty using weekly returns
+#  Used for dynamic scoring based on market state
+# ─────────────────────────────────────────────────────────────
+
+def calc_stock_beta(stock_df, nifty_df, periods=52):
+    """
+    Calculate beta of stock vs Nifty.
+    Uses weekly returns for last 'periods' weeks.
+
+    Beta < 0.7  = DEFENSIVE (low correlation to market)
+    Beta 0.7-1.1 = NEUTRAL
+    Beta > 1.4  = HIGH BETA (amplifies market moves)
+    """
+    try:
+        stock_ret = stock_df['Close'].pct_change().dropna()
+        nifty_ret = nifty_df['Close'].pct_change().dropna()
+
+        # Align on common dates
+        aligned = stock_ret.to_frame('stock').join(
+                  nifty_ret.to_frame('nifty'), how='inner').dropna()
+
+        if len(aligned) < 20:
+            return 1.0  # default to market beta
+
+        # Use last N periods
+        aligned = aligned.tail(periods)
+
+        cov = aligned['stock'].cov(aligned['nifty'])
+        var = aligned['nifty'].var()
+        beta = round(cov / var, 2) if var > 0 else 1.0
+
+        # Cap at reasonable range
+        return max(0.1, min(beta, 3.0))
+
+    except Exception:
+        return 1.0
+
+
+def get_beta_score(beta, nifty_swing_state):
+    """
+    Dynamic beta score based on Nifty state.
+
+    BULLISH market  → reward high beta (more upside)
+    BEARISH market  → penalise high beta (protect capital)
+    CAUTION market  → neutral to slight defensive preference
+    """
+    state = nifty_swing_state.get('state', 'UNKNOWN')
+
+    if state == 'BULLISH':
+        # Reward aggression — ride the bull
+        if   beta >= 1.5: return +10, '🚀 High Beta', '#15803d'
+        elif beta >= 1.1: return +5,  '📈 Medium Beta', '#16a34a'
+        elif beta >= 0.7: return  0,  '➡️ Neutral Beta', '#64748b'
+        else:             return -5,  '🛡️ Low Beta', '#d97706'
+
+    elif state == 'CAUTION':
+        # Slight defensive preference
+        if   beta >= 1.5: return -5,  '⚠️ High Beta', '#d97706'
+        elif beta >= 1.1: return  0,  '➡️ Medium Beta', '#64748b'
+        elif beta >= 0.7: return +3,  '✅ Stable Beta', '#16a34a'
+        else:             return +5,  '🛡️ Defensive', '#15803d'
+
+    elif state == 'BEARISH':
+        # Protect capital — penalise aggression
+        if   beta >= 1.5: return -15, '🔴 High Beta (RISK)', '#dc2626'
+        elif beta >= 1.2: return -10, '🔴 Sensitive Beta', '#dc2626'
+        elif beta >= 1.0: return -5,  '⚠️ Above Market', '#d97706'
+        elif beta >= 0.7: return +5,  '✅ Stable Beta', '#16a34a'
+        else:             return +10, '🛡️ Defensive', '#15803d'
+
+    else:  # UNKNOWN
+        return 0, '❓ Beta', '#64748b'
+
+
+def get_beta_grade(beta):
+    """Return grade label, colour and icon for display."""
+    if   beta < 0.5:  return 'DEFENSIVE',  '#15803d', '#f0fdf4', '#86efac', '🛡️'
+    elif beta < 0.8:  return 'STABLE',     '#16a34a', '#dcfce7', '#bbf7d0', '🟢'
+    elif beta < 1.1:  return 'NEUTRAL',    '#64748b', '#f8fafc', '#e2e8f0', '➡️'
+    elif beta < 1.4:  return 'SENSITIVE',  '#d97706', '#fffbeb', '#fde68a', '🟠'
+    else:             return 'HIGH BETA',  '#dc2626', '#fef2f2', '#fca5a5', '🔴'
+
+
+# ─────────────────────────────────────────────────────────────
+#  UNIFIED SECTOR RANKING — Single source of truth
+#  Used by: Monthly Swing, SMA Weekly, Sector Leaders
+#  11 unique sectors, no duplicates
+# ─────────────────────────────────────────────────────────────
+
+SECTOR_ETF_UNIFIED = {
+    'BANK':        '^NSEBANK',    # Nifty Bank       ✅ ETF available
+    'IT':          '^CNXIT',      # Nifty IT          ✅ ETF available
+    'AUTO':        '^CNXAUTO',    # Nifty Auto        ✅ ETF available
+    'PHARMA':      '^CNXPHARMA',  # Nifty Pharma      ✅ ETF available
+    'FMCG':        '^CNXFMCG',    # Nifty FMCG        ✅ ETF available
+    'METALS':      '^CNXMETAL',   # Nifty Metal       ✅ ETF available
+    'ENERGY':      '^CNXENERGY',  # Nifty Energy      ✅ ETF available
+    'REALTY':      '^CNXREALTY',  # Nifty Realty      ✅ ETF available
+    'INFRA':       '^CNXINFRA',   # Nifty Infra       ✅ ETF available
+    'FINANCE':     '^CNXFIN',     # Nifty Fin Svc     ✅ ETF available
+    'MEDIA':       '^CNXMEDIA',   # Nifty Media       ✅ ETF available
+    # ── PROXY sectors (no yfinance ETF) ──────────────────
+    'HEALTHCARE':  'PROXY',       # Hospitals — no ETF
+    'PSU_BANK':    'PROXY',       # PSU banks — no ETF
+    'PVT_BANK':    'PROXY',       # Private banks — no ETF
+    'CHEMICALS':   'PROXY',       # Specialty chemicals — no ETF
+    'DEFENCE':     'PROXY',       # Defence — no dedicated ETF
+    'CONSUMPTION': 'PROXY',       # Consumer durables/discretionary
+    'TELECOM':     'PROXY',       # Telecom — no ETF
+    'TEXTILES':    'PROXY',       # Textiles — no NSE sectoral index
+    'AGRI':        'PROXY',       # Agri/Fertilisers — no ETF
+    'LOGISTICS':   'PROXY',       # Logistics/Supply chain — no ETF
+}
+
+# ── Proxy stocks for sectors without yfinance ETF ─────────────
+# Average returns of top 5 stocks = sector performance proxy
+SECTOR_PROXY_STOCKS = {
+    'HEALTHCARE':  ['APOLLOHOSP','MAXHEALTH','FORTIS','KIMS','ASTER'],
+    'PSU_BANK':    ['SBIN','PNB','CANBK','BANKBARODA','UNIONBANK'],
+    'PVT_BANK':    ['HDFCBANK','ICICIBANK','KOTAKBANK','AXISBANK','INDUSINDBK'],
+    'CHEMICALS':   ['PIDILITIND','SRF','AARTIIND','DEEPAKNTR','NAVINFLUOR'],
+    'DEFENCE':     ['HAL','BEL','BDL','BEML','COCHINSHIP'],
+    'CONSUMPTION': ['DMART','TRENT','TITAN','WHIRLPOOL','VOLTAS'],
+    'TELECOM':     ['BHARTIARTL','INDUSTOWER','TATACOMM','HFCL','IDEA'],
+    'TEXTILES':    ['PAGEIND','VARDHMAN','TRIDENT','WELSPUNIND','RAYMOND'],
+    'AGRI':        ['PIIND','UPL','CHAMBLFERT','GSFC','COROMANDEL'],
+    'LOGISTICS':   ['CONCOR','BLUEDART','DELHIVERY','TCI','MAHINDLOG'],
+}
+
+# ─────────────────────────────────────────────────────────────
+#  INDUSTRY → SECTOR mapping
+#  Maps every SECTOR_MAP industry label → SECTOR_ETF_UNIFIED key
+#  This is the SINGLE authoritative mapping used everywhere
+#  Covers all 22 industry categories found in SECTOR_MAP
+# ─────────────────────────────────────────────────────────────
+INDUSTRY_TO_SECTOR = {
+    # Direct mappings
+    'AUTO':           'AUTO',
+    'BANKING':        'BANK',
+    'CHEMICALS':      'CHEMICALS',
+    'ENERGY':         'ENERGY',
+    'FMCG':           'FMCG',
+    'INFRA':          'INFRA',
+    'IT':             'IT',
+    'MEDIA':          'MEDIA',
+    'METALS':         'METALS',
+    'PHARMA':         'PHARMA',
+    'REALTY':         'REALTY',
+    'TELECOM':        'TELECOM',
+    # Grouped mappings
+    'INSURANCE':      'FINANCE',      # Insurance → Financial Services
+    'NBFC':           'FINANCE',      # Non-Banking Finance → Finance
+    'CAPITAL_MARKETS':'FINANCE',      # Brokers, AMCs → Finance
+    'CONSUMER':       'CONSUMPTION',  # Consumer durables/discretionary
+    'RETAIL':         'CONSUMPTION',  # Retail → Consumption
+    'SOLAR':          'ENERGY',       # Solar/Renewables → Energy
+    'CEMENT':         'INFRA',        # Cement → Infrastructure
+    'AVIATION':       'INFRA',        # Aviation → Infrastructure
+    'CONGLOMERATE':   'INFRA',        # Conglomerates → Infrastructure (mixed)
+    'LOGISTICS':      'LOGISTICS',    # Logistics → Logistics proxy
+}
+
+
+def classify_stock_sector(sym):
+    """
+    SINGLE authoritative function to map stock → sector.
+    Used by ALL parts of the app.
+
+    Priority:
+    1. SECTOR_MAP → INDUSTRY_TO_SECTOR  (most accurate, covers 500+ stocks)
+    2. Hardcoded exceptions               (stocks not in SECTOR_MAP)
+    3. UNKNOWN                            (truly unmapped → neutral C8 score)
+
+    Returns: sector string (key in SECTOR_ETF_UNIFIED)
+    """
+    sym = sym.upper().replace('.NS', '').strip()
+
+    # ── Step 1: SECTOR_MAP lookup (primary, most accurate) ────
+    if sym in SECTOR_MAP:
+        industry = SECTOR_MAP[sym].upper()
+        if industry in INDUSTRY_TO_SECTOR:
+            return INDUSTRY_TO_SECTOR[industry]
+        # Industry exists in SECTOR_MAP but not in our map
+        # Return industry directly if it matches a sector key
+        if industry in SECTOR_ETF_UNIFIED:
+            return industry
+        # Unknown industry — return UNKNOWN for neutral handling
+        return 'UNKNOWN'
+
+    # ── Step 2: Hardcoded for stocks not in SECTOR_MAP ────────
+    # Only for well-known stocks that are commonly scanned
+    _HARDCODED = {
+        # Healthcare (hospitals — separate from pharma)
+        'APOLLOHOSP': 'HEALTHCARE', 'MAXHEALTH': 'HEALTHCARE',
+        'FORTIS':     'HEALTHCARE', 'KIMS':      'HEALTHCARE',
+        'ASTER':      'HEALTHCARE', 'NHPC':      'ENERGY',
+        # PSU Banks
+        'SBIN':       'PSU_BANK',   'PNB':       'PSU_BANK',
+        'CANBK':      'PSU_BANK',   'BANKBARODA':'PSU_BANK',
+        'UNIONBANK':  'PSU_BANK',   'INDIANB':   'PSU_BANK',
+        'BANKINDIA':  'PSU_BANK',   'MAHABANK':  'PSU_BANK',
+        'IOB':        'PSU_BANK',   'CENTRALBK': 'PSU_BANK',
+        # Private Banks
+        'HDFCBANK':   'PVT_BANK',   'ICICIBANK': 'PVT_BANK',
+        'KOTAKBANK':  'PVT_BANK',   'AXISBANK':  'PVT_BANK',
+        'INDUSINDBK': 'PVT_BANK',   'FEDERALBNK':'PVT_BANK',
+        'BANDHANBNK': 'PVT_BANK',   'IDFCFIRSTB':'PVT_BANK',
+        'AUBANK':     'PVT_BANK',   'RBLBANK':   'PVT_BANK',
+        # Defence
+        'HAL':        'DEFENCE',    'BEL':       'DEFENCE',
+        'BDL':        'DEFENCE',    'BEML':      'DEFENCE',
+        'COCHINSHIP': 'DEFENCE',    'GRSE':      'DEFENCE',
+        'MAZDOCK':    'DEFENCE',    'DATAPATTNS':'DEFENCE',
+        # Textiles
+        'PAGEIND':    'TEXTILES',   'VARDHMAN':  'TEXTILES',
+        'TRIDENT':    'TEXTILES',   'WELSPUNIND':'TEXTILES',
+        'RAYMOND':    'TEXTILES',   'ARVIND':    'TEXTILES',
+        'GRASIM':     'TEXTILES',   'ALOKTEXT':  'TEXTILES',
+        # Logistics
+        'CONCOR':     'LOGISTICS',  'BLUEDART':  'LOGISTICS',
+        'DELHIVERY':  'LOGISTICS',  'TCI':       'LOGISTICS',
+        'MAHINDLOG':  'LOGISTICS',  'ALLCARGO':  'LOGISTICS',
+        # Agri/Fertilisers
+        'PIIND':      'AGRI',       'UPL':       'AGRI',
+        'CHAMBLFERT': 'AGRI',       'GSFC':      'AGRI',
+        'COROMANDEL': 'AGRI',       'NFL':       'AGRI',
+        'GNFC':       'AGRI',       'DEEPAKFERT':'AGRI',
+    }
+    if sym in _HARDCODED:
+        return _HARDCODED[sym]
+
+    # ── Step 3: Truly unknown → UNKNOWN ───────────────────────
+    # Caller handles UNKNOWN → neutral C8 score (0 pts)
+    return 'UNKNOWN'
+
+# Cached sector rankings — refreshed once per hour
+_SECTOR_RANK_CACHE = {}
+
+def _get_proxy_sector_data(proxy_stocks, period='6mo'):
+    """
+    Calculate sector ETF-equivalent data using proxy stocks.
+    Returns a synthetic DataFrame with averaged Close prices.
+    """
+    import pandas as _pd3
+    _all_closes = []
+    for _ps in proxy_stocks[:5]:  # max 5 stocks
+        try:
+            _pdf = yf.Ticker(_ps+'.NS').history(
+                period=period, interval='1d',
+                auto_adjust=True, actions=False)
+            if _pdf is None or len(_pdf) < 10:
+                continue
+            _pdf.columns = [c.split(' ')[0] if ' ' in str(c) else c
+                            for c in _pdf.columns]
+            _pdf = _pdf[['Close']].dropna()
+            # Normalise to 100 base for averaging
+            if float(_pdf['Close'].iloc[0]) > 0:
+                _pdf['Close'] = _pdf['Close'] / float(_pdf['Close'].iloc[0]) * 100
+                _all_closes.append(_pdf['Close'])
+        except Exception:
+            continue
+
+    if not _all_closes:
+        return None
+
+    # Align and average
+    _combined = _pd3.concat(_all_closes, axis=1).dropna()
+    _combined.columns = [f's{i}' for i in range(len(_combined.columns))]
+    _synthetic = _pd3.DataFrame()
+    _synthetic['Close'] = _combined.mean(axis=1)
+    return _synthetic
+
+
+def get_unified_sector_rankings(formula='weekly'):
+    """
+    Single shared function for sector rankings.
+    Used by ALL three tabs — consistent results everywhere.
+
+    formula='weekly':  1M(50%) + 2W(30%) + 1W(20%)  — SMA Weekly
+    formula='monthly': 3M(50%) + 1M(30%) + 2W(20%)  — Monthly Swing
+
+    ETF sectors: use yfinance ETF directly
+    PROXY sectors: average top stocks as synthetic ETF
+
+    Returns:
+        rank_map:   {sector: rank_number}    rank 1 = strongest
+        rs_map:     {sector: weighted_rs%}
+        status_map: {sector: (bullish, gap%)}
+        detail_map: {sector: {r1,r2,r3,weighted}}
+        ranked:     [(sector, score), ...] sorted desc
+    """
+    import time as _t
+    global _SECTOR_RANK_CACHE
+    _cache_key = f'sector_rankings_{formula}'
+    if _cache_key in _SECTOR_RANK_CACHE:
+        _cached, _ts = _SECTOR_RANK_CACHE[_cache_key]
+        if _t.time() - _ts < 3600:   # 1-hour cache
+            return _cached
+
+    # Periods based on formula
+    if formula == 'weekly':
+        _w1, _w2, _w3 = 0.50, 0.30, 0.20
+        _p1, _p2, _p3 = 20, 10, 5
+    else:  # monthly
+        _w1, _w2, _w3 = 0.50, 0.30, 0.20
+        _p1, _p2, _p3 = 60, 20, 10
+
+    # Fetch Nifty base returns (daily)
+    _nf_r1 = _nf_r2 = _nf_r3 = 0.0
+    try:
+        _nf = yf.Ticker('^NSEI').history(
+            period='6mo', interval='1d',
+            auto_adjust=True, actions=False)
+        _nf.columns = [c.split(' ')[0] if ' ' in str(c) else c for c in _nf.columns]
+        _nf = _nf[['Close']].dropna()
+        if len(_nf) >= _p1:
+            _nf_r1 = float((_nf['Close'].iloc[-1]-_nf['Close'].iloc[-_p1])/_nf['Close'].iloc[-_p1]*100)
+        if len(_nf) >= _p2:
+            _nf_r2 = float((_nf['Close'].iloc[-1]-_nf['Close'].iloc[-_p2])/_nf['Close'].iloc[-_p2]*100)
+        if len(_nf) >= _p3:
+            _nf_r3 = float((_nf['Close'].iloc[-1]-_nf['Close'].iloc[-_p3])/_nf['Close'].iloc[-_p3]*100)
+    except Exception:
+        pass
+
+    rank_map   = {}
+    rs_map     = {}
+    status_map = {}
+    detail_map = {}
+
+    for _sec, _etf in SECTOR_ETF_UNIFIED.items():
+        try:
+            # ── Get price data ────────────────────────────
+            if _etf == 'PROXY':
+                # Use proxy stocks for this sector
+                _proxy_stocks = SECTOR_PROXY_STOCKS.get(_sec, [])
+                if not _proxy_stocks:
+                    rs_map[_sec]     = 0.0
+                    status_map[_sec] = (True, 0.0)
+                    detail_map[_sec] = {'r1':0,'r2':0,'r3':0,'weighted':0,'source':'PROXY'}
+                    continue
+                _sf = _get_proxy_sector_data(_proxy_stocks)
+                if _sf is None or len(_sf) < _p3 + 2:
+                    rs_map[_sec]     = 0.0
+                    status_map[_sec] = (True, 0.0)
+                    detail_map[_sec] = {'r1':0,'r2':0,'r3':0,'weighted':0,'source':'PROXY'}
+                    continue
+                _source = 'PROXY'
+            else:
+                # Use ETF directly
+                _sf = yf.Ticker(_etf).history(
+                    period='6mo', interval='1d',
+                    auto_adjust=True, actions=False)
+                if _sf is None or len(_sf) < _p3 + 2:
+                    rs_map[_sec]     = 0.0
+                    status_map[_sec] = (True, 0.0)
+                    detail_map[_sec] = {'r1':0,'r2':0,'r3':0,'weighted':0,'source':'ETF'}
+                    continue
+                _sf.columns = [c.split(' ')[0] if ' ' in str(c) else c for c in _sf.columns]
+                _sf = _sf[['Close']].dropna()
+                _source = 'ETF'
+
+            # ── Multi-period RS vs Nifty ──────────────────
+            _e_r1 = float((_sf['Close'].iloc[-1]-_sf['Close'].iloc[-min(_p1,len(_sf)-1)])/_sf['Close'].iloc[-min(_p1,len(_sf)-1)]*100) if len(_sf)>=_p1 else 0
+            _e_r2 = float((_sf['Close'].iloc[-1]-_sf['Close'].iloc[-min(_p2,len(_sf)-1)])/_sf['Close'].iloc[-min(_p2,len(_sf)-1)]*100) if len(_sf)>=_p2 else 0
+            _e_r3 = float((_sf['Close'].iloc[-1]-_sf['Close'].iloc[-min(_p3,len(_sf)-1)])/_sf['Close'].iloc[-min(_p3,len(_sf)-1)]*100) if len(_sf)>=_p3 else 0
+
+            _rs1 = _e_r1 - _nf_r1
+            _rs2 = _e_r2 - _nf_r2
+            _rs3 = _e_r3 - _nf_r3
+            _weighted = round(_w1*_rs1 + _w2*_rs2 + _w3*_rs3, 2)
+
+            # ── SMA20 vs SMA50 for bullish/bearish ────────
+            _sf['SMA20'] = _sf['Close'].rolling(20).mean()
+            _sf['SMA50'] = _sf['Close'].rolling(50).mean()
+            _sf = _sf.dropna()
+            _s20 = float(_sf['SMA20'].iloc[-1]) if len(_sf)>0 else 0
+            _s50 = float(_sf['SMA50'].iloc[-1]) if len(_sf)>0 else 0
+            _gap = (_s20-_s50)/_s50*100 if _s50>0 else 0
+
+            rs_map[_sec]     = _weighted
+            status_map[_sec] = (_s20 > _s50, round(_gap, 2))
+            detail_map[_sec] = {
+                'r1':      round(_rs1, 1),
+                'r2':      round(_rs2, 1),
+                'r3':      round(_rs3, 1),
+                'weighted':_weighted,
+                'source':  _source,
+            }
+        except Exception:
+            rs_map[_sec]     = 0.0
+            status_map[_sec] = (True, 0.0)
+            detail_map[_sec] = {'r1':0,'r2':0,'r3':0,'weighted':0,'source':'ERROR'}
+
+    # Build rank map (rank 1 = strongest)
+    _ranked  = sorted(rs_map.items(), key=lambda x: x[1], reverse=True)
+    rank_map = {s: i+1 for i, (s, _) in enumerate(_ranked)}
+
+    _result = {
+        'rank_map':   rank_map,
+        'rs_map':     rs_map,
+        'status_map': status_map,
+        'detail_map': detail_map,
+        'ranked':     _ranked,
+    }
+    _SECTOR_RANK_CACHE[_cache_key] = (_result, _t.time())
+    return _result
+
+
+def get_sector_score_for_stock(sym, formula='weekly'):
+    """
+    Get sector rank + C8 score for a stock.
+    Uses classify_stock_sector() — single authoritative mapping.
+    Returns: (sector_name, rank, rs, bullish, gap, score, score_label, clr)
+    """
+    sec = classify_stock_sector(sym)
+
+    # Handle UNKNOWN sector → neutral, no penalty
+    if sec == 'UNKNOWN':
+        return 'UNKNOWN', 99, 0.0, True, 0.0, 0, '❓ Unknown sector', '#64748b'
+
+    # Get unified rankings
+    _rankings = get_unified_sector_rankings(formula)
+    rank      = _rankings['rank_map'].get(sec, 10)
+    rs        = _rankings['rs_map'].get(sec, 0.0)
+    bull, gap = _rankings['status_map'].get(sec, (True, 0.0))
+
+    # C8 score — BONUS ONLY, minimal penalty
+    # Sector tells context, not individual stock quality
+    # Strong sector = bonus, weak sector = small penalty only
+    # Individual stock RS vs sector is the real differentiator
+    if   rank <= 2 and bull:  _score = +10; _lbl = f'🥇 #{rank} {sec} (Top sector)'
+    elif rank <= 4 and bull:  _score = +7;  _lbl = f'🥈 #{rank} {sec}'
+    elif rank <= 6 and bull:  _score = +3;  _lbl = f'🥉 #{rank} {sec}'
+    elif rank <= 9 and bull:  _score = 0;   _lbl = f'➡️ #{rank} {sec}'
+    else:                     _score = -3;  _lbl = f'⚠️ #{rank} {sec} (Weak sector)'
+
+    # Sector bearish = small additional penalty
+    if not bull:
+        _score = max(_score - 2, -3)
+
+    _clr = ('#15803d' if _score >= 7 else
+            '#16a34a' if _score >= 3 else
+            '#64748b' if _score == 0 else
+            '#d97706')
+
+    return sec, rank, rs, bull, gap, _score, _lbl, _clr
+
+
+# ─────────────────────────────────────────────────────────────
+#  FILTER 1 — CLOSING POSITION IN CANDLE
+#  week_pos = (Close - Low) / (High - Low)
+#  > 0.75 = buyers won = +8 pts
+#  < 0.25 = sellers won = REJECT
+# ─────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────
+#  VOLATILITY SQUEEZE DETECTION (TTM Squeeze Logic)
+#  Detects when Bollinger Bands compress inside Keltner Channel
+#  = energy building up for an explosive move
+#
+#  Logic:
+#    Bollinger Bands:   SMA20 ± 2.0× StdDev(20)
+#    Keltner Channel:   SMA20 ± 1.5× ATR(20)
+#    SQUEEZE ON:  BB inside KC  (BB_upper < KC_upper)
+#    SQUEEZE OFF: BB outside KC (BB_upper > KC_upper)
+#    FIRED:       Was squeezed → now expanding
+# ─────────────────────────────────────────────────────────────
+
+def detect_volatility_squeeze(df, bb_mult=2.0, kc_mult=1.5, atr_period=20):
+    """
+    Detects volatility squeeze using TTM Squeeze logic.
+    Works on any timeframe (daily, weekly).
+
+    Returns dict:
+      squeeze_on:       bool  — currently compressed
+      squeeze_fired:    bool  — just broke out of squeeze
+      squeeze_weeks:    int   — how many bars squeeze has been building
+      direction:        str   — 'BULLISH' / 'BEARISH' / 'NEUTRAL'
+      bb_width_pct:     float — current BB width as % of price
+      bb_expanding:     bool  — BB width growing (breakout)
+      bb_width_change:  float — % change in BB width (last 3 bars)
+      kc_width_pct:     float — KC width as % of price
+      momentum:         float — squeeze momentum value
+      score:            int   — scoring contribution
+      label:            str   — display label
+      clr:              str   — display colour
+    """
+    import numpy as _np
+
+    _result = {
+        'squeeze_on':      False,
+        'squeeze_fired':   False,
+        'squeeze_weeks':   0,
+        'direction':       'NEUTRAL',
+        'bb_width_pct':    0.0,
+        'bb_expanding':    False,
+        'bb_width_change': 0.0,
+        'kc_width_pct':    0.0,
+        'momentum':        0.0,
+        'score':           0,
+        'label':           '➡️ No squeeze',
+        'clr':             '#64748b',
+        'ico':             '➡️',
+    }
+
+    try:
+        if len(df) < atr_period + 5:
+            return _result
+
+        df = df.copy()
+        close = df['Close'].values.astype(float)
+        high  = df['High'].values.astype(float)
+        low   = df['Low'].values.astype(float)
+
+        # ── Bollinger Bands ─────────────────────────────
+        _sma20 = _np.array([
+            close[max(0,i-atr_period):i].mean()
+            for i in range(atr_period, len(close)+1)
+        ])
+        _std20 = _np.array([
+            close[max(0,i-atr_period):i].std()
+            for i in range(atr_period, len(close)+1)
+        ])
+        _bb_upper = _sma20 + bb_mult * _std20
+        _bb_lower = _sma20 - bb_mult * _std20
+        _bb_width = (_bb_upper - _bb_lower) / _sma20 * 100
+
+        # ── Keltner Channel (using True Range ATR) ──────
+        _tr = _np.array([
+            max(high[i]-low[i],
+                abs(high[i]-close[i-1]) if i>0 else 0,
+                abs(low[i]-close[i-1])  if i>0 else 0)
+            for i in range(len(close))
+        ])
+        _atr = _np.array([
+            _tr[max(0,i-atr_period):i].mean()
+            for i in range(atr_period, len(_tr)+1)
+        ])
+        n = min(len(_sma20), len(_atr))
+        _sma20 = _sma20[-n:]
+        _bb_upper = _bb_upper[-n:]
+        _bb_lower = _bb_lower[-n:]
+        _bb_width = _bb_width[-n:]
+        _atr = _atr[-n:]
+
+        _kc_upper = _sma20 + kc_mult * _atr
+        _kc_lower = _sma20 - kc_mult * _atr
+        _kc_width = (_kc_upper - _kc_lower) / _sma20 * 100
+
+        # ── Squeeze detection per bar ───────────────────
+        _squeeze_bars = (_bb_upper < _kc_upper) & (_bb_lower > _kc_lower)
+
+        if len(_squeeze_bars) < 2:
+            return _result
+
+        # Current state
+        _curr_squeeze = bool(_squeeze_bars[-1])
+        _prev_squeeze = bool(_squeeze_bars[-2])
+
+        # Squeeze just fired = was ON, now OFF
+        _fired = _prev_squeeze and not _curr_squeeze
+
+        # Count consecutive squeeze bars
+        _sq_count = 0
+        for i in range(len(_squeeze_bars)-1, -1, -1):
+            if _squeeze_bars[i]:
+                _sq_count += 1
+            else:
+                break
+        # If fired, count how long it was squeezed
+        if _fired:
+            _sq_count = 0
+            for i in range(len(_squeeze_bars)-2, -1, -1):
+                if _squeeze_bars[i]:
+                    _sq_count += 1
+                else:
+                    break
+
+        # BB width change (expansion detection)
+        _curr_bbw = float(_bb_width[-1])
+        _prev_bbw = float(_bb_width[-4]) if len(_bb_width) >= 4 else _curr_bbw
+        _bbw_change = (_curr_bbw - _prev_bbw) / _prev_bbw * 100 if _prev_bbw > 0 else 0
+        _expanding = _bbw_change > 10  # expanding > 10% = real breakout
+
+        # Direction (price vs SMA20)
+        _close_now = float(close[-1])
+        _sma20_now = float(_sma20[-1])
+        if   _close_now > _sma20_now * 1.005: _direction = 'BULLISH'
+        elif _close_now < _sma20_now * 0.995: _direction = 'BEARISH'
+        else:                                  _direction = 'NEUTRAL'
+
+        # Momentum (simplified — delta of midline)
+        _mid_now  = float((_bb_upper[-1] + _bb_lower[-1]) / 2)
+        _mid_prev = float((_bb_upper[-3] + _bb_lower[-3]) / 2) if len(_bb_upper) >= 3 else _mid_now
+        _momentum = (_mid_now - _mid_prev) / _mid_prev * 100 if _mid_prev > 0 else 0
+
+        # ── Score calculation ───────────────────────────
+        _score = 0
+        _label = ''
+        _clr   = '#64748b'
+        _ico   = '➡️'
+
+        if _fired and _direction == 'BULLISH':
+            # FIRED — score based on how long it was building
+            _weeks_txt = f'{_sq_count} bar{"s" if _sq_count!=1 else ""}'
+            if   _sq_count >= 15: _score = 15   # very long = possibly stuck
+            elif _sq_count >= 10: _score = 22   # long — big move expected
+            elif _sq_count >= 7:  _score = 25   # sweet spot ✅✅
+            elif _sq_count >= 5:  _score = 20   # good ✅
+            elif _sq_count >= 3:  _score = 15   # developing
+            else:                 _score = 10   # early
+
+            if _sq_count >= 7:
+                _label = f'🔥 SQUEEZE FIRED — {_weeks_txt} compressed · STRONG'
+            else:
+                _label = f'🔥 SQUEEZE FIRED — {_weeks_txt} compressed'
+            _clr = '#15803d'
+            _ico = '🔥'
+            if _expanding:
+                _score += 5   # confirmed BB expansion
+                _label += ' · BB Expanding'
+
+        elif _fired and _direction == 'BEARISH':
+            _score = -10
+            _label = f'⬇️ Squeeze fired BEARISH — skip'
+            _clr   = '#dc2626'
+            _ico   = '⬇️'
+
+        elif _curr_squeeze and _direction == 'BULLISH':
+            # BUILDING — score based on compression duration
+            if   _sq_count >= 7:  _score = 12; _lbl_sfx = f'{_sq_count} bars · Almost ready 🔜'
+            elif _sq_count >= 5:  _score = 8;  _lbl_sfx = f'{_sq_count} bars · Watch closely'
+            elif _sq_count >= 3:  _score = 5;  _lbl_sfx = f'{_sq_count} bars · Building'
+            else:                 _score = 2;  _lbl_sfx = f'{_sq_count} bar · Early stage'
+            _label = f'🟡 Squeeze building {_lbl_sfx}'
+            _clr   = '#d97706'
+            _ico   = '🟡'
+
+        elif not _curr_squeeze and not _fired:
+            # High volatility — bad time to enter
+            if _curr_bbw > float(_bb_width[-min(10,len(_bb_width)):].mean()) * 1.3:
+                _score = -8
+                _label = '⚠️ High volatility — no squeeze'
+                _clr   = '#dc2626'
+                _ico   = '⚠️'
+            else:
+                _score = 0
+                _label = '➡️ No squeeze detected'
+                _clr   = '#64748b'
+                _ico   = '➡️'
+
+        _result.update({
+            'squeeze_on':      _curr_squeeze,
+            'squeeze_fired':   _fired,
+            'squeeze_weeks':   _sq_count,
+            'direction':       _direction,
+            'bb_width_pct':    round(_curr_bbw, 2),
+            'bb_expanding':    _expanding,
+            'bb_width_change': round(_bbw_change, 1),
+            'kc_width_pct':    round(float(_kc_width[-1]), 2),
+            'momentum':        round(_momentum, 2),
+            'score':           _score,
+            'label':           _label,
+            'clr':             _clr,
+            'ico':             _ico,
+        })
+
+    except Exception:
+        pass
+
+    return _result
+
+
+
+# ─────────────────────────────────────────────────────────────
+#  ADX — Average Directional Index
+#  Measures TREND STRENGTH (not direction)
+#  ADX > 25 = strong trend = higher win rate
+#  ADX < 20 = ranging/choppy = avoid
+#
+#  Also calculates +DI and -DI for direction
+#  +DI > -DI = bullish direction
+#  -DI > +DI = bearish direction
+# ─────────────────────────────────────────────────────────────
+
+def calc_adx(df, period=14):
+    """
+    Calculate ADX, +DI, -DI using correct Wilder RMA smoothing.
+    Returns (adx, plus_di, minus_di) or (None, None, None).
+
+    Auto-reduces period for stocks with limited data:
+      len(df) >= 60: period = 14 (standard)
+      len(df) >= 40: period = 10 (reduced)
+      len(df) >= 25: period = 7  (minimal)
+      len(df) <  25: return None
+    """
+    import numpy as _np
+    try:
+        # Auto-select period based on available data
+        if   len(df) >= 60: period = 14
+        elif len(df) >= 40: period = 10
+        elif len(df) >= 25: period = 7
+        else:               return None, None, None
+
+        _min_bars = period * 3
+        if len(df) < _min_bars:
+            return None, None, None
+
+        _hi = df['High'].values.astype(float)
+        _lo = df['Low'].values.astype(float)
+        _cl = df['Close'].values.astype(float)
+        _n  = len(_cl)
+
+        # True Range and Directional Movement
+        _tr  = _np.zeros(_n)
+        _pdm = _np.zeros(_n)
+        _mdm = _np.zeros(_n)
+        for i in range(1, _n):
+            _tr[i]  = max(_hi[i]-_lo[i],
+                          abs(_hi[i]-_cl[i-1]),
+                          abs(_lo[i]-_cl[i-1]))
+            _up   = _hi[i] - _hi[i-1]
+            _down = _lo[i-1] - _lo[i]
+            _pdm[i] = _up   if (_up > _down and _up > 0)   else 0.0
+            _mdm[i] = _down if (_down > _up and _down > 0) else 0.0
+
+        # Wilder RMA (Running Moving Average) — CORRECT formula
+        # Seed with SMA of first `period` values, then apply EMA
+        def _wilder_rma(arr, p):
+            _s = _np.zeros(len(arr))
+            if p >= len(arr):
+                return _s
+            # Seed: simple average of first p non-zero bars
+            _seed_vals = arr[1:p+1]
+            _s[p] = _seed_vals.mean() if len(_seed_vals) > 0 else 0.0
+            for i in range(p+1, len(arr)):
+                _s[i] = (_s[i-1] * (p - 1) + arr[i]) / p
+            return _s
+
+        _atr_s = _wilder_rma(_tr,  period)
+        _pdm_s = _wilder_rma(_pdm, period)
+        _mdm_s = _wilder_rma(_mdm, period)
+
+        # +DI and -DI
+        _pdi = _np.where(_atr_s > 0, 100.0 * _pdm_s / _atr_s, 0.0)
+        _mdi = _np.where(_atr_s > 0, 100.0 * _mdm_s / _atr_s, 0.0)
+
+        # DX
+        _denom = _pdi + _mdi
+        _dx    = _np.where(_denom > 0,
+                           100.0 * _np.abs(_pdi - _mdi) / _denom,
+                           0.0)
+
+        # ADX = Wilder RMA of DX
+        _adx_arr = _wilder_rma(_dx, period)
+
+        # Get last valid values
+        _adx     = float(_adx_arr[-1])
+        _plus_di = float(_pdi[-1])
+        _minus_di= float(_mdi[-1])
+
+        # Validate
+        if not (0 < _adx <= 100):
+            return None, None, None
+        if not (0 <= _plus_di <= 100):
+            return None, None, None
+
+        return round(_adx, 1), round(_plus_di, 1), round(_minus_di, 1)
+
+    except Exception:
+        return None, None, None
+
+
+def get_adx_score(adx, plus_di, minus_di):
+    """
+    Returns (score, label, colour) based on ADX reading.
+
+    Scoring:
+      ADX > 40:    +10 pts  Very strong trend
+      ADX 30-40:    +8 pts  Strong trend
+      ADX 25-30:    +6 pts  Good trend
+      ADX 20-25:    +3 pts  Developing
+      ADX 15-20:     0 pts  Weak
+      ADX < 15:     -5 pts  Ranging/choppy
+
+    Direction bonus:
+      +DI > -DI AND ADX > 25: +3 pts extra
+    """
+    if adx is None:
+        return 0, '➡️ ADX N/A', '#64748b'
+
+    # Base score
+    if   adx > 40:  _sc = 10; _str = 'Very Strong'
+    elif adx > 30:  _sc = 8;  _str = 'Strong'
+    elif adx > 25:  _sc = 6;  _str = 'Good'
+    elif adx > 20:  _sc = 3;  _str = 'Developing'
+    elif adx > 15:  _sc = 0;  _str = 'Weak'
+    else:           _sc = -5; _str = 'Ranging'
+
+    # Direction bonus
+    _dir_bonus = 0
+    _dir_txt   = ''
+    if plus_di is not None and minus_di is not None:
+        if plus_di > minus_di and adx > 25:
+            _dir_bonus = 3
+            _dir_txt   = ' +DI↑'
+
+    _total = _sc + _dir_bonus
+
+    # Label
+    _ico  = ('📈' if adx > 25 else '➡️' if adx > 15 else '📉')
+    _lbl  = f'{_ico} ADX {adx:.0f} {_str}{_dir_txt} ({"+"+str(_total) if _total>=0 else str(_total)}pts)'
+
+    # Colour
+    _clr  = ('#15803d' if _total >= 6 else
+             '#16a34a' if _total >= 3 else
+             '#d97706' if _total == 0 else
+             '#dc2626')
+
+    return _total, _lbl, _clr
+
+
+def get_candle_close_position(df, bars=1):
+    """
+    Returns (week_pos, score, label, reject) for the last N bars.
+    bars=1  → current candle only
+    bars=3  → average of last 3 candles (more reliable)
+    """
+    try:
+        _positions = []
+        for i in range(1, bars + 1):
+            if i >= len(df): break
+            _h = float(df['High'].iloc[-i])
+            _l = float(df['Low'].iloc[-i])
+            _c = float(df['Close'].iloc[-i])
+            if _h == _l: continue
+            _positions.append((_c - _l) / (_h - _l))
+
+        if not _positions:
+            return 0.5, 0, '➡️ Neutral', False
+
+        week_pos = round(sum(_positions) / len(_positions), 3)
+
+        if   week_pos >= 0.75: return week_pos, +8,  '🟢 Strong close (top 25%)',   False
+        elif week_pos >= 0.50: return week_pos, +3,  '🟡 Above mid',                False
+        elif week_pos >= 0.25: return week_pos,  0,  '🟠 Below mid',                False
+        else:                  return week_pos, -99, '🔴 Weak close (bottom 25%)',   True  # REJECT
+    except Exception:
+        return 0.5, 0, '➡️ Unknown', False
+
+
+# ─────────────────────────────────────────────────────────────
+#  FILTER 2 — PRIOR CANDLE COMPARISON
+#  Compares current candle body vs previous candle body
+#  Growing body = conviction building = +5 pts
+#  Shrinking body = momentum fading = -5 pts
+# ─────────────────────────────────────────────────────────────
+def get_candle_body_momentum(df):
+    """
+    Compares current vs previous candle body size.
+    Returns (ratio, score, label)
+    """
+    try:
+        if len(df) < 2:
+            return 1.0, 0, '➡️ No data'
+
+        _curr_body = abs(float(df['Close'].iloc[-1]) - float(df['Open'].iloc[-1]))
+        _prev_body = abs(float(df['Close'].iloc[-2]) - float(df['Open'].iloc[-2]))
+
+        if _prev_body <= 0:
+            return 1.0, 0, '➡️ Neutral'
+
+        ratio = round(_curr_body / _prev_body, 2)
+
+        if   ratio >= 1.5:  return ratio, +8,  f'🔥 Strong ({ratio:.1f}× prev body)'
+        elif ratio >= 1.2:  return ratio, +5,  f'✅ Growing ({ratio:.1f}× prev body)'
+        elif ratio >= 0.8:  return ratio,  0,  f'➡️ Similar ({ratio:.1f}× prev body)'
+        elif ratio >= 0.5:  return ratio, -5,  f'⚠️ Shrinking ({ratio:.1f}× prev body)'
+        else:               return ratio, -8,  f'❌ Collapsing ({ratio:.1f}× prev body)'
+    except Exception:
+        return 1.0, 0, '➡️ Unknown'
+
+
+# ─────────────────────────────────────────────────────────────
+#  FILTER 3 — DRAWDOWN-BASED POSITION SIZING
+#  Adjusts risk% based on Nifty state + personal drawdown
+#  Protects capital during bad runs automatically
+# ─────────────────────────────────────────────────────────────
+def get_dynamic_risk_pct(base_risk_pct, nifty_state, drawdown_pct):
+    """
+    Returns adjusted risk% based on:
+      - Nifty swing state (BULLISH/CAUTION/BEARISH)
+      - Personal drawdown % (running loss from peak)
+
+    drawdown_pct: positive number = % drawdown
+      e.g. 5.0 = currently 5% below peak capital
+
+    Returns: (adj_risk_pct, label, color, reduce_reason)
+    """
+    # Step 1 — Nifty state multiplier
+    _nifty_mult = {
+        'BULLISH':    1.00,   # full size
+        'LATE_BULL':  0.75,   # reduce — transition warning
+        'CAUTION':    0.50,   # half size
+        'EARLY_BEAR': 0.35,   # significant reduction
+        'BEARISH':    0.25,   # minimal
+        'UNKNOWN':    0.75,
+    }.get(nifty_state, 0.75)
+
+    # Step 2 — Drawdown multiplier
+    if   drawdown_pct < 3:   _dd_mult = 1.00; _dd_label = 'Normal'
+    elif drawdown_pct < 7:   _dd_mult = 0.75; _dd_label = 'Caution'
+    elif drawdown_pct < 12:  _dd_mult = 0.50; _dd_label = 'Reduced'
+    else:                    _dd_mult = 0.25; _dd_label = 'Danger'
+
+    # Combined
+    adj = round(base_risk_pct * _nifty_mult * _dd_mult, 2)
+    adj = max(0.25, min(adj, base_risk_pct))  # floor 0.25%, ceiling = base
+
+    # Label
+    if   adj >= base_risk_pct: _lbl = f'✅ Full size ({adj:.2f}%)'
+    elif adj >= base_risk_pct * 0.75: _lbl = f'⚠️ Slightly reduced ({adj:.2f}%)'
+    elif adj >= base_risk_pct * 0.50: _lbl = f'🔴 Half size ({adj:.2f}%)'
+    else:                             _lbl = f'⛔ Minimum size ({adj:.2f}%)'
+
+    _reasons = []
+    if _nifty_mult < 1.0: _reasons.append(f'Nifty {nifty_state}')
+    if _dd_mult    < 1.0: _reasons.append(f'Drawdown {drawdown_pct:.1f}% ({_dd_label})')
+    _reason = ' + '.join(_reasons) if _reasons else 'No adjustment'
+
+    _clr = '#15803d' if adj >= base_risk_pct else \
+           '#d97706' if adj >= base_risk_pct*0.5 else '#dc2626'
+
+    return adj, _lbl, _clr, _reason
+
+
+def get_drawdown_pct(capital):
+    """
+    Get current drawdown% from Streamlit session state.
+    User inputs peak capital; app tracks running P&L.
+    """
+    import streamlit as _st2
+    peak   = _st2.session_state.get('peak_capital', capital)
+    curr   = _st2.session_state.get('current_capital', capital)
+    if peak <= 0: return 0.0
+    dd = max(0.0, (peak - curr) / peak * 100)
+    return round(dd, 2)
+
+
+# ─────────────────────────────────────────────────────────────
+#  RS vs OWN SECTOR
+#  Compares stock return vs its sector ETF/proxy over 20 days
+#  Stock outperforming sector = genuine leader ✅
+#  Stock underperforming sector = laggard ❌
+# ─────────────────────────────────────────────────────────────
+
+def get_rs_vs_sector(df, sector_name, sector_rs_map=None):
+    """
+    RS vs own sector using ALREADY FETCHED data.
+    Uses sector RS from unified rankings (no extra API call).
+    Compares stock's change vs sector ETF performance.
+
+    df:            stock daily OHLCV (already downloaded)
+    sector_name:   sector string from classify_stock_sector()
+    sector_rs_map: dict from get_unified_sector_rankings()['rs_map']
+
+    Returns (outperf_pct, score, label, clr)
+    """
+    try:
+        if df is None or len(df) < 5:
+            return 0.0, 0, '', '#64748b'
+
+        # Stock 20-day return
+        _n = min(20, len(df)-1)
+        _s_ret = float(
+            (df['Close'].iloc[-1] - df['Close'].iloc[-_n])
+            / df['Close'].iloc[-_n] * 100
+        )
+
+        # Sector return from cached rankings (NO API call)
+        if sector_rs_map and sector_name in sector_rs_map:
+            _sec_ret = float(sector_rs_map[sector_name])
+        else:
+            return 0.0, 0, '', '#64748b'
+
+        # Outperformance vs sector
+        _diff = round(_s_ret - _sec_ret, 2)
+
+        # RS vs sector — boosted weight
+        # This is the KEY filter that finds leaders in any sector
+        # HINDZINC in weak metals, TORNTPHARM in weak pharma
+        # = outperforming sector = enter regardless of sector rank
+        if   _diff >= 8.0:  _sc = 15; _lbl = f'🌟 Strong sector leader (+{_diff:.1f}% vs sector)'
+        elif _diff >= 5.0:  _sc = 10; _lbl = f'🏆 Sector leader (+{_diff:.1f}% vs sector)'
+        elif _diff >= 2.0:  _sc = 6;  _lbl = f'✅ Outperforming sector (+{_diff:.1f}%)'
+        elif _diff >= -3.0: _sc = 0;  _lbl = f'➡️ Inline with sector ({_diff:+.1f}%)'
+        elif _diff >= -8.0: _sc = -2; _lbl = f'⚠️ Slightly behind sector ({_diff:.1f}%)'
+        else:               _sc = -4; _lbl = f'❌ Lagging sector ({_diff:.1f}%)'
+
+        _clr = '#15803d' if _sc > 0 else '#64748b' if _sc == 0 else '#d97706'
+        return _diff, _sc, _lbl, _clr
+
+    except Exception:
+        return 0.0, 0, '', '#64748b'
+
+
+def get_htf_alignment(df, current_tf='daily'):
+    """
+    Higher timeframe alignment using ALREADY FETCHED data.
+    Resamples daily df to weekly — NO extra API call.
+
+    df:         stock OHLCV (daily for SW, weekly for MS)
+    current_tf: 'daily' → check weekly | 'weekly' → check monthly
+
+    Returns (score, label, clr)
+    """
+    try:
+        if df is None or len(df) < 10:
+            return 0, '', '#64748b'
+
+        if current_tf == 'daily':
+            # Resample daily → weekly to check higher TF
+            _tf_lbl = '1wk'
+            _df = df.resample('W', on=df.index.name if df.index.name else None).agg({
+                'Close': 'last', 'High': 'max',
+                'Low': 'min',   'Open': 'first'
+            }).dropna() if hasattr(df.index, 'freq') else df
+
+            # If resample doesn't work, use weekly approximation from daily
+            # Group every 5 rows as a week
+            _closes = df['Close'].dropna().values
+            _weekly = [float(_closes[max(0,i-4):i+1].mean())
+                       for i in range(4, len(_closes), 5)]
+            if len(_weekly) < 5:
+                return 0, '', '#64748b'
+        else:
+            # For monthly: group every ~21 days
+            _closes = df['Close'].dropna().values
+            _weekly = [float(_closes[max(0,i-20):i+1].mean())
+                       for i in range(20, len(_closes), 21)]
+            _tf_lbl = '1mo'
+            if len(_weekly) < 3:
+                return 0, '', '#64748b'
+
+        import numpy as _np2
+        _weekly = _np2.array(_weekly)
+        _p20 = min(20, len(_weekly))
+        _p50 = min(50, len(_weekly))
+
+        _s20   = float(_np2.mean(_weekly[-_p20:]))
+        _s50   = float(_np2.mean(_weekly[-_p50:]))
+        _price = float(_weekly[-1])
+        _s20p  = float(_np2.mean(_weekly[-min(25,len(_weekly)):-min(5,len(_weekly))])) if len(_weekly) >= 6 else _s20
+
+        _above  = _price > _s20 > _s50
+        _rising = _s20 > _s20p
+
+        # Smaller scores — reward alignment, minimal penalty
+        if   _above and _rising:
+            _sc = 8;  _lbl = f'✅ HTF {_tf_lbl}: Uptrend confirmed'
+            _clr = '#15803d'
+        elif _above:
+            _sc = 4;  _lbl = f'✅ HTF {_tf_lbl}: Bullish'
+            _clr = '#16a34a'
+        elif _price > _s50:
+            _sc = 0;  _lbl = f'⚠️ HTF {_tf_lbl}: Caution'
+            _clr = '#d97706'
+        else:
+            _sc = -2; _lbl = f'❌ HTF {_tf_lbl}: Bearish'
+            _clr = '#dc2626'
+
+        return _sc, _lbl, _clr
+
+    except Exception:
+        return 0, '', '#64748b'
+
+
+# ─────────────────────────────────────────────────────────────
+#  LATE BULL TRANSITION DETECTION
+#  Detects when market is transitioning from BULLISH to BEARISH
+#  This is the MOST DANGEROUS period for swing traders
+#  = trend still technically up but momentum slowing
+# ─────────────────────────────────────────────────────────────
+
+def get_nifty_transition_state(nifty_df):
+    """
+    Detects 5 market states with finer granularity:
+
+    BULLISH:     SMA20 > SMA50, SMA20 rising strongly (slope > 0.5%)
+    LATE_BULL:   SMA20 > SMA50, SMA20 flattening (slope 0-0.5%)
+    CAUTION:     SMA20 flattening or just crossed below SMA50
+    EARLY_BEAR:  SMA20 < SMA50, declining but not deep
+    BEARISH:     SMA20 < SMA50, declining significantly
+
+    Returns: (state, slope_pct, gap_pct, label, clr, bg)
+    """
+    try:
+        _cl = nifty_df['Close'].dropna()
+        if len(_cl) < 55:
+            return 'UNKNOWN', 0, 0, 'Unknown', '#64748b', '#f8fafc'
+
+        _sma20  = float(_cl.rolling(20).mean().iloc[-1])
+        _sma50  = float(_cl.rolling(50).mean().iloc[-1])
+        _sma20p = float(_cl.rolling(20).mean().iloc[-6])  # 5 bars ago
+        _price  = float(_cl.iloc[-1])
+
+        _slope  = round((_sma20 - _sma20p) / _sma20p * 100, 3) if _sma20p > 0 else 0
+        _gap    = round((_sma20 - _sma50) / _sma50 * 100, 2) if _sma50 > 0 else 0
+        _above  = _sma20 > _sma50
+
+        if   _above and _slope >= 0.5:
+            _st='BULLISH';    _lbl='🟢 BULLISH';    _clr='#15803d'; _bg='#f0fdf4'
+        elif _above and _slope >= 0.1:
+            _st='LATE_BULL';  _lbl='🟡 LATE BULL — Trend Flattening'; _clr='#d97706'; _bg='#fffbeb'
+        elif _above and _slope >= 0:
+            _st='CAUTION';    _lbl='⚠️ CAUTION';    _clr='#d97706'; _bg='#fffbeb'
+        elif not _above and _gap >= -2:
+            _st='EARLY_BEAR'; _lbl='🟠 EARLY BEAR'; _clr='#ea580c'; _bg='#fff7ed'
+        else:
+            _st='BEARISH';    _lbl='🔴 BEARISH';    _clr='#dc2626'; _bg='#fef2f2'
+
+        return _st, _slope, _gap, _lbl, _clr, _bg
+
+    except Exception:
+        return 'UNKNOWN', 0, 0, 'Unknown', '#64748b', '#f8fafc'
+
+
+
+#  FILTER A — RS vs Own Sector
+#  Measures if stock is outperforming its sector
+#  = sector leaders vs sector laggards
+#  Only sector leaders tend to sustain moves
+# ─────────────────────────────────────────────────────────────
 def get_sector_momentum(results_so_far):
     """
     Calculate average % change per sector from scan results collected so far.
@@ -3262,7 +4699,7 @@ def compute_intraday_pick_score(r):
     # ── Core indicators ───────────────────────────────────
     scores['Signal'] = 20 if r['signal_val'] == 1 else (0 if r['signal_val'] == 0 else -10)
     conf = r['live_conf']
-    scores['Conf%']  = 15 if conf >= 80 else (12 if conf >= 70 else (9 if conf >= 60 else (5 if conf >= 40 else 0)))
+    scores['Conf%']  = 15 if conf >= 130 else (12 if conf >= 100 else (9 if conf >= 75 else (5 if conf >= 55 else 0)))
 
     # ── Trend signals need minimum 3-candle confirmation ──
     # Prevents single-candle false flips (Brigade pattern)
@@ -4167,6 +5604,8 @@ with st.sidebar:
         ("🔔  Alert Log",     "Alert Log"),
         ("📈  SMA Weekly",    "SMA Weekly"),
         ("📅  Monthly Swing", "Monthly Swing"),
+        ("🧪  Backtest",      "Backtest"),
+        ("🏆  Sector Leaders","Sector Leaders"),
     ]
     # Inject sidebar button styles once — clean single-item nav
     st.markdown("""
@@ -4478,6 +5917,8 @@ if active_page == "🌅  Dashboard":
     _show_orb         = False
     _show_smaweekly   = False
     _show_monthlyswing= False
+    _show_backtest    = False
+    _show_sectorleaders= False
 elif active_page == "💼  Portfolio":
     _show_dashboard   = False
     _show_scanner     = False
@@ -4487,6 +5928,8 @@ elif active_page == "💼  Portfolio":
     _show_orb         = False
     _show_smaweekly   = False
     _show_monthlyswing= False
+    _show_backtest    = False
+    _show_sectorleaders= False
 elif active_page == "🔔  Alert Log":
     _show_dashboard   = False
     _show_scanner     = False
@@ -4496,6 +5939,8 @@ elif active_page == "🔔  Alert Log":
     _show_orb         = False
     _show_smaweekly   = False
     _show_monthlyswing= False
+    _show_backtest    = False
+    _show_sectorleaders= False
 elif active_page == "🚀  Early Movers":
     _show_dashboard   = False
     _show_scanner     = False
@@ -4505,6 +5950,8 @@ elif active_page == "🚀  Early Movers":
     _show_orb         = False
     _show_smaweekly   = False
     _show_monthlyswing= False
+    _show_backtest    = False
+    _show_sectorleaders= False
 elif active_page == "🔓  ORB Scanner":
     _show_dashboard   = False
     _show_scanner     = False
@@ -4521,6 +5968,8 @@ elif active_page == "📊  Scanner":
     _show_orb         = False
     _show_smaweekly   = False
     _show_monthlyswing= False
+    _show_backtest    = False
+    _show_sectorleaders= False
 elif active_page == "📈  SMA Weekly":
     _show_dashboard   = False
     _show_scanner     = False
@@ -4530,6 +5979,8 @@ elif active_page == "📈  SMA Weekly":
     _show_orb         = False
     _show_smaweekly   = True
     _show_monthlyswing= False
+    _show_backtest    = False
+    _show_sectorleaders= False
 elif active_page == "📅  Monthly Swing":
     _show_dashboard   = False
     _show_scanner     = False
@@ -4539,6 +5990,30 @@ elif active_page == "📅  Monthly Swing":
     _show_orb         = False
     _show_smaweekly   = False
     _show_monthlyswing= True
+    _show_backtest    = False
+    _show_sectorleaders= False
+elif active_page == "🧪  Backtest":
+    _show_dashboard    = False
+    _show_scanner      = False
+    _show_portfolio    = False
+    _show_alertlog     = False
+    _show_earlymovers  = False
+    _show_orb          = False
+    _show_smaweekly    = False
+    _show_monthlyswing = False
+    _show_backtest     = True
+    _show_sectorleaders= False
+elif active_page == "🏆  Sector Leaders":
+    _show_dashboard    = False
+    _show_scanner      = False
+    _show_portfolio    = False
+    _show_alertlog     = False
+    _show_earlymovers  = False
+    _show_orb          = False
+    _show_smaweekly    = False
+    _show_monthlyswing = False
+    _show_backtest     = False
+    _show_sectorleaders= True
 else:
     # Default → Dashboard
     _show_dashboard   = True
@@ -4549,6 +6024,8 @@ else:
     _show_orb         = False
     _show_smaweekly   = False
     _show_monthlyswing= False
+    _show_backtest    = False
+    _show_sectorleaders= False
 
 # ─────────────────────────────────────────────
 #  DASHBOARD PAGE
@@ -5091,8 +6568,8 @@ if _show_dashboard:
                     f"{'+' if _op_pl>=0 else ''}₹{_op_pl:,.0f}</div>"
                     f"<div style='font-size:11px;color:{_op_clr}'>"
                     f"{'+' if _op_pct>=0 else ''}{_op_pct:.2f}%</div>"
-                    f"{'<div style=\"font-size:11px;font-weight:700;color:#dc2626;margin-top:4px\">🛑 SL HIT — Exit Now</div>' if _op_sl_hit else ''}"
-                    f"</div>", unsafe_allow_html=True)
+                    + ("<div style=\"font-size:11px;font-weight:700;color:#dc2626;margin-top:4px\">🛑 SL HIT — Exit Now</div>" if _op_sl_hit else "")
+                    + "</div>", unsafe_allow_html=True)
         if len(_db_open) > 3:
             st.markdown(
                 f"<div style='font-size:12px;color:#94a3b8;margin-top:4px'>"
@@ -5284,15 +6761,47 @@ if _show_scanner:
         _bar_cols = st.columns([1, 2, 1])
         with _bar_cols[0]:
             _ni = {'BULL':'📈','SIDEWAYS':'↔️','BEAR':'📉','UNKNOWN':'❓'}.get(_nifty_state_bar,'❓')
+
+            # Get swing state from session (set by last scan) or fetch fresh
+            _sw_swing = st.session_state.get('nifty_swing_weekly', {})
+            _sw_state = _sw_swing.get('state', 'UNKNOWN')
+            _sw_sma20 = _sw_swing.get('sma20', 0)
+            _sw_close = _sw_swing.get('close', 0)
+            _sw_clr   = {'BULLISH':'#15803d','CAUTION':'#d97706',
+                         'BEARISH':'#dc2626','UNKNOWN':'#64748b'}.get(_sw_state,'#64748b')
+            _sw_ico   = {'BULLISH':'✅','CAUTION':'⚠️',
+                         'BEARISH':'🔴','UNKNOWN':'❓'}.get(_sw_state,'❓')
+            # Daily swing state (from SMA Weekly scan)
+            _sd_swing = st.session_state.get('nifty_swing_daily', {})
+            _sd_state = _sd_swing.get('state', 'UNKNOWN')
+            _sd_sma20 = _sd_swing.get('sma20', 0)
+            _sd_clr   = {'BULLISH':'#15803d','CAUTION':'#d97706',
+                         'BEARISH':'#dc2626','UNKNOWN':'#64748b'}.get(_sd_state,'#64748b')
+            _sd_ico   = {'BULLISH':'✅','CAUTION':'⚠️',
+                         'BEARISH':'🔴','UNKNOWN':'❓'}.get(_sd_state,'❓')
+
             st.markdown(
                 f"<div style='background:{_nc_bar}22;border:1px solid {_nc_bar}44;"
                 f"border-radius:8px;padding:10px 14px;margin-bottom:8px'>"
                 f"<div style='font-size:11px;font-weight:700;color:{_nc_bar}'>"
-                f"{_ni} Nifty: {_nifty_state_bar}</div>"
+                f"{_ni} Nifty Today: {_nifty_state_bar}</div>"
                 f"<div style='font-size:18px;font-weight:800;color:{_nc_bar};"
                 f"font-family:JetBrains Mono'>"
                 f"{'+' if _nifty_chg_bar>=0 else ''}{_nifty_chg_bar:.2f}%</div>"
-                f"</div>", unsafe_allow_html=True)
+                + (f"<div style='margin-top:6px;padding-top:6px;"
+                   f"border-top:1px solid {_nc_bar}33;font-size:10px;"
+                   f"font-weight:700;color:{_sw_clr}'>"
+                   f"{_sw_ico} Monthly Swing: {_sw_state}"
+                   + (f" · Weekly SMA20 ₹{_sw_sma20:,.0f}"
+                      if _sw_sma20 > 0 else "")
+                   + "</div>" if _sw_state != 'UNKNOWN' else "")
+                + (f"<div style='margin-top:4px;font-size:10px;"
+                   f"font-weight:700;color:{_sd_clr}'>"
+                   f"{_sd_ico} SMA Weekly: {_sd_state}"
+                   + (f" · Daily SMA20 ₹{_sd_sma20:,.0f}"
+                      if _sd_sma20 > 0 else "")
+                   + "</div>" if _sd_state != 'UNKNOWN' else "")
+                + "</div>", unsafe_allow_html=True)
 
         with _bar_cols[1]:
             _vix_str2 = f"{_vix_bar:.2f}" if _vix_bar else "—"
@@ -8515,9 +10024,9 @@ if _show_earlymovers:
             f"{_expiry_badge}"
             f"<span style='background:#dcfce7;color:#15803d;font-size:11px;font-weight:700;border-radius:6px;padding:3px 10px'>✅ {_em_enter} Enter</span>"
             f"<span style='background:#fffbeb;color:#d97706;font-size:11px;font-weight:700;border-radius:6px;padding:3px 10px'>👀 {_em_watch} Watch</span>"
-            f"{'<span style=\"background:#fff7ed;color:#ea580c;font-size:11px;font-weight:700;border-radius:6px;padding:3px 10px\">⏳ ' + str(_em_wait) + ' Wait</span>' if _em_wait else ''}"
-            f"{'<span style=\"background:#fef2f2;color:#dc2626;font-size:11px;font-weight:700;border-radius:6px;padding:3px 10px\">⚠️ ' + str(_em_fade) + ' Fading</span>' if _em_fade else ''}"
-            f"</div></div>", unsafe_allow_html=True)
+            + (f"<span style='background:#fff7ed;color:#ea580c;font-size:11px;font-weight:700;border-radius:6px;padding:3px 10px'>⏳ {_em_wait} Wait</span>" if _em_wait else "")
+            + (f"<span style='background:#fef2f2;color:#dc2626;font-size:11px;font-weight:700;border-radius:6px;padding:3px 10px'>⚠️ {_em_fade} Fading</span>" if _em_fade else "")
+            + "</div></div>", unsafe_allow_html=True)
 
         # Entry guide (expiry-aware)
         if _is_expiry:
@@ -9166,6 +10675,45 @@ if _show_portfolio:
                 f"Loss: ₹{abs(unreal):,.0f} · Click Square Off below</div>"
                 f"</div>", unsafe_allow_html=True)
 
+        # ── F&O Expiry Warning ────────────────────────────
+        _pf_fno_info = get_fno_info(sym_c)
+        _pf_zone     = _pf_fno_info['expiry_zone']
+        _pf_is_fno   = _pf_fno_info['is_fno']
+        _pf_dte      = _pf_fno_info['days_to_exp']
+        if _pf_is_fno and _pf_zone in ('DANGER', 'CAUTION'):
+            _pf_warn_bg  = '#fef2f2' if _pf_zone == 'DANGER' else '#fffbeb'
+            _pf_warn_bdr = '#fca5a5' if _pf_zone == 'DANGER' else '#fde68a'
+            _pf_warn_clr = '#dc2626' if _pf_zone == 'DANGER' else '#d97706'
+            _pf_warn_ico = '🔴' if _pf_zone == 'DANGER' else '⚠️'
+            _pf_warn_title = (f'Expiry in {_pf_dte} days — Price may be pinned'
+                              if _pf_zone == 'DANGER'
+                              else f'Expiry in {_pf_dte} days — Approaching expiry')
+            _pf_warn_msg = ('F&O expiry week · Stock may be pinned near current price · '
+                            'Targets may not hit this week · '
+                            'Consider tightening SL to PSAR level'
+                            if _pf_zone == 'DANGER'
+                            else 'Second half of month · Slower movement expected · '
+                                 'Reduce expectations for this week')
+            st.markdown(
+                f"<div style='background:{_pf_warn_bg};border:1.5px solid {_pf_warn_bdr};"
+                f"border-radius:8px;padding:8px 14px;margin-bottom:6px'>"
+                f"<div style='font-size:11px;font-weight:700;color:{_pf_warn_clr}'>"
+                f"{_pf_warn_ico} {_pf_warn_title}</div>"
+                f"<div style='font-size:10px;color:{_pf_warn_clr};margin-top:2px'>"
+                f"📌 F&O listed stock · {_pf_warn_msg}</div>"
+                f"</div>", unsafe_allow_html=True)
+        elif _pf_is_fno and _pf_zone == 'FRESH':
+            st.markdown(
+                f"<div style='background:#f0fdf4;border:1.5px solid #86efac;"
+                f"border-radius:8px;padding:8px 14px;margin-bottom:6px'>"
+                f"<div style='font-size:11px;font-weight:700;color:#15803d'>"
+                f"🟢 Post-Expiry — Fresh F&O cycle started</div>"
+                f"<div style='font-size:10px;color:#15803d;margin-top:2px'>"
+                f"📌 F&O listed · New positions being built · "
+                f"Normal movement expected · Good time to hold</div>"
+                f"</div>", unsafe_allow_html=True)
+
+
         # ── Progress bar ──────────────────────────────────
         _t2_pct  = round((t2 - entry) / entry * 100, 2) if entry > 0 and t2 > 0 else 2.0
         _sl_pct  = round((entry - sl)  / entry * 100, 2) if entry > 0 and sl > 0 else 0.5
@@ -9598,13 +11146,89 @@ if _show_smaweekly:
         _sw_risk_pct = st.number_input(
             "Risk %", min_value=0.5, max_value=3.0,
             value=1.5, step=0.5, format="%.1f", key="sw_risk_pct",
-            help="Max risk per trade as % of capital")
+            help="Max risk per trade as % of capital — auto-reduced based on Nifty + drawdown")
 
-    # Min score filter
+    # ── Drawdown Tracking ──────────────────────────────
+    with st.expander("📉 Drawdown Tracking — Auto Position Sizing"):
+        _sw_dd_col1, _sw_dd_col2 = st.columns(2)
+        with _sw_dd_col1:
+            _sw_peak_cap = st.number_input(
+                "Peak Capital ₹ (your best balance)",
+                min_value=50000, max_value=10000000,
+                value=st.session_state.get('peak_capital', _sw_capital),
+                step=10000, format="%d", key="sw_peak_capital",
+                help="Your highest capital balance — used to calculate drawdown %")
+        with _sw_dd_col2:
+            _sw_curr_cap = st.number_input(
+                "Current Capital ₹ (today's balance)",
+                min_value=50000, max_value=10000000,
+                value=st.session_state.get('current_capital', _sw_capital),
+                step=10000, format="%d", key="sw_curr_capital",
+                help="Your current capital balance")
+        # Store in session
+        st.session_state['peak_capital']    = _sw_peak_cap
+        st.session_state['current_capital'] = _sw_curr_cap
+        _sw_drawdown_pct = max(0.0, (_sw_peak_cap - _sw_curr_cap) / _sw_peak_cap * 100) \
+                           if _sw_peak_cap > 0 else 0.0
+        _sw_drawdown_pct = round(_sw_drawdown_pct, 2)
+
+        # Show current drawdown status
+        _sw_dd_clr = '#15803d' if _sw_drawdown_pct < 3 else \
+                     '#d97706' if _sw_drawdown_pct < 7 else \
+                     '#dc2626' if _sw_drawdown_pct < 12 else '#7f1d1d'
+        _sw_dd_lbl = 'Normal ✅' if _sw_drawdown_pct < 3 else \
+                     'Caution ⚠️' if _sw_drawdown_pct < 7 else \
+                     'Reduced 🔴' if _sw_drawdown_pct < 12 else 'Danger ⛔'
+        st.markdown(
+            f"<div style='background:{_sw_dd_clr}22;border:1px solid {_sw_dd_clr}44;"
+            f"border-radius:8px;padding:8px 14px;font-size:11px;font-weight:700;"
+            f"color:{_sw_dd_clr}'>"
+            f"📉 Current Drawdown: {_sw_drawdown_pct:.1f}% — {_sw_dd_lbl}"
+            f"<br><span style='font-weight:400;font-size:10px'>"
+            f"Position sizes will be automatically adjusted based on drawdown + Nifty state"
+            f"</span></div>",
+            unsafe_allow_html=True)
+
+    # Min signal score filter
     _sw_min_score = st.slider(
         "Min signal score", min_value=50, max_value=90, value=65,
         step=5, key="sw_min_score",
         help="Higher = fewer but stronger signals")
+
+    # ── Strict Entry Mode ──────────────────────────────
+    _sw_strict = st.checkbox(
+        "🛡️ Strict Entry Mode",
+        value=True,
+        key="sw_strict_mode",
+        help=(
+            "When ON — only shows stocks where:\n"
+            "✅ PSAR is BULLISH (price above PSAR)\n"
+            "✅ No bearish candles (Shooting Star, Doji excluded)\n"
+            "✅ PA Signal is not 🔴 RISKY\n\n"
+            "Mild Bull candles are allowed for SMA Weekly\n"
+            "(daily candles have less conviction than weekly)\n\n"
+            "When OFF — shows all signals including\n"
+            "bearish PSAR and bearish candles"
+        ))
+    if _sw_strict:
+        st.markdown(
+            "<div style='background:#f0fdf4;border:1.5px solid #86efac;"
+            "border-radius:8px;padding:8px 14px;font-size:11px;"
+            "color:#15803d;margin-bottom:8px'>"
+            "🛡️ <b>Strict Mode ON</b> — PSAR bullish required · "
+            "Bearish candles filtered · PA RISKY excluded · "
+            "Mild Bull allowed for weekly trades"
+            "</div>",
+            unsafe_allow_html=True)
+    else:
+        st.markdown(
+            "<div style='background:#fffbeb;border:1.5px solid #fde68a;"
+            "border-radius:8px;padding:8px 14px;font-size:11px;"
+            "color:#d97706;margin-bottom:8px'>"
+            "⚠️ <b>Strict Mode OFF</b> — All signals shown including "
+            "weak candles and bearish PSAR · More stocks · Lower quality"
+            "</div>",
+            unsafe_allow_html=True)
 
     # Volatility filter
     _sw_vol_col1, _sw_vol_col2 = st.columns(2)
@@ -9641,29 +11265,35 @@ if _show_smaweekly:
     def calc_confident_score(r):
         """
         Calculate confident score from result dict.
-        Combines 6 factors into single 0-100 score.
+        Combines 6 factors into single 0-100+ score.
         Works for both Monthly Swing and SMA Weekly.
         """
-        # ── Component 1: Technical Score (30 pts) ────────
+        # ── Component 1: Technical Score (25 pts) ────────
+        # Raw scanner score reflects all technical signals
         sc = r.get('score', 0)
-        if   sc >= 130: c1 = 30
-        elif sc >= 120: c1 = 25
-        elif sc >= 110: c1 = 20
-        elif sc >= 100: c1 = 15
-        else:           c1 = 10
+        if   sc >= 90: c1 = 25
+        elif sc >= 80: c1 = 22
+        elif sc >= 70: c1 = 18
+        elif sc >= 60: c1 = 14
+        elif sc >= 50: c1 = 10
+        else:          c1 = 6
 
-        # ── Component 2: PSAR Status (25 pts) ────────────
-        # Most critical — no entry if PSAR bearish
+        # ── Component 2: PSAR Status (20 pts) ────────────
         psar_bull = r.get('psar_bullish', False)
         if psar_bull:   c2 = 20
-        else:           c2 = 0   # PSAR bearish = kills confident score
+        else:           c2 = 0
 
         # ── Component 3: Structure HH+HL (15 pts) ────────
-        hh = r.get('hh', False)
-        hl = r.get('hl', False)
-        if   hh and hl: c3 = 15
-        elif hh or hl:  c3 = 8
-        else:           c3 = 0
+        _pa_struct = r.get('pa', {}).get('structure', '')
+        if   'Bullish' in _pa_struct: c3 = 15
+        elif 'Neutral' in _pa_struct: c3 = 8
+        elif 'Broken'  in _pa_struct: c3 = 0
+        else:
+            hh = r.get('hh', False)
+            hl = r.get('hl', False)
+            if   hh and hl: c3 = 15
+            elif hh or hl:  c3 = 8
+            else:           c3 = 0
 
         # ── Component 4: Entry Badge (15 pts) ─────────────
         badge = r.get('entry_badge', 'ACCEPTABLE')
@@ -9687,24 +11317,43 @@ if _show_smaweekly:
         elif liq == 'MEDIUM':    c6 = 1
         else:                    c6 = 0
 
-        total = c1 + c2 + c3 + c4 + c5 + c6
+        # ── Component 7: F&O Expiry (±15 pts) ────────────
+        c7 = r.get('fno_penalty', 0)
+
+        # ── Component 8: Sector Ranking (±10 pts) ─────────
+        # Uses unified sector ranking — same as Sector Leaders tab
+        _sym_r  = r.get('symbol', r.get('sym', ''))
+        _sec_r, _sec_rank_r, _sec_rs_r, _sec_bull_r, _, c8, _, _ = \
+            get_sector_score_for_stock(_sym_r, formula='weekly')
+
+        total = c1 + c2 + c3 + c4 + c5 + c6 + c7 + c8
 
         # ── Signal label ──────────────────────────────────
-        if   total >= 80:
+        if   total >= 130:
             label = '🔥 CONFIDENT BUY'
             clr   = '#15803d'
             bg    = '#f0fdf4'
             bdr   = '#86efac'
-        elif total >= 60:
-            label = '✅ GOOD SETUP'
+        elif total >= 100:
+            label = '✅ STRONG SETUP'
+            clr   = '#0369a1'
+            bg    = '#f0f9ff'
+            bdr   = '#7dd3fc'
+        elif total >= 75:
+            label = '👍 GOOD SETUP'
             clr   = '#1d4ed8'
             bg    = '#eff6ff'
             bdr   = '#93c5fd'
-        else:
+        elif total >= 55:
             label = '⚠️ WEAK'
             clr   = '#d97706'
             bg    = '#fffbeb'
             bdr   = '#fcd34d'
+        else:
+            label = '❌ SKIP'
+            clr   = '#dc2626'
+            bg    = '#fef2f2'
+            bdr   = '#fca5a5'
 
         return {
             'confident_score': total,
@@ -9718,6 +11367,10 @@ if _show_smaweekly:
             'c4_badge':  c4,
             'c5_rr':     c5,
             'c6_liq':    c6,
+            'c7_fno':    c7,
+            'c8_sector': c8,
+            'c8_sector_name': _sec_r,
+            'c8_sector_rank': _sec_rank_r,
         }
 
     # ── Scan function ─────────────────────────────────────
@@ -9733,6 +11386,68 @@ if _show_smaweekly:
         total       = len(stocks)
         _prog_sw    = st.progress(0, text="📈 Scanning SMA20 + SMA50 signals...")
         _stat_sw    = st.empty()
+
+        # ── Pre-fetch Nifty daily for beta + swing state ──
+        _sw_nifty_df    = None
+        _sw_nifty_swing = {'state': 'UNKNOWN'}
+        try:
+            import yfinance as _yf_sw_nf
+            _nf_sw = _yf_sw_nf.Ticker('^NSEI').history(
+                period='1y', interval='1d',
+                auto_adjust=True, actions=False)
+            if _nf_sw is not None and len(_nf_sw) >= 25:
+                _nf_sw.columns = [c.split(' ')[0] if ' ' in str(c) else c
+                                   for c in _nf_sw.columns]
+                _nf_sw = _nf_sw[['Close']].dropna()
+                _nf_sw['SMA20'] = _nf_sw['Close'].rolling(20).mean()
+                _nf_sw['SMA50'] = _nf_sw['Close'].rolling(50).mean()
+                _sw_nifty_df = _nf_sw.copy()
+
+                _sw_close = float(_nf_sw['Close'].iloc[-1])
+                _sw_sma20 = float(_nf_sw['SMA20'].iloc[-1])
+                _sw_sma50 = float(_nf_sw['SMA50'].iloc[-1])
+                _sw_prev5 = float(_nf_sw['SMA20'].iloc[-6]) if len(_nf_sw) >= 6 else _sw_sma20
+                _sw_slope = (_sw_sma20 - _sw_prev5) / _sw_prev5 * 100 if _sw_prev5 > 0 else 0
+
+                if   _sw_close > _sw_sma20 > _sw_sma50 and _sw_slope >= 0.5:
+                    _sw_nifty_swing['state'] = 'BULLISH'
+                elif _sw_close > _sw_sma20 > _sw_sma50 and _sw_slope >= 0.1:
+                    _sw_nifty_swing['state'] = 'LATE_BULL'   # ← NEW: trend flattening
+                elif _sw_close > _sw_sma20 > _sw_sma50:
+                    _sw_nifty_swing['state'] = 'CAUTION'
+                elif _sw_close > _sw_sma20:
+                    _sw_nifty_swing['state'] = 'CAUTION'
+                elif _sw_close > _sw_sma50:
+                    _sw_nifty_swing['state'] = 'EARLY_BEAR'  # ← NEW: below SMA20, above SMA50
+                else:
+                    _sw_nifty_swing['state'] = 'BEARISH'
+
+                _sw_nifty_swing['close'] = round(_sw_close, 2)
+                _sw_nifty_swing['sma20'] = round(_sw_sma20, 2)
+                _sw_nifty_swing['sma50'] = round(_sw_sma50, 2)
+                # Cache for dashboard
+                st.session_state['nifty_swing_daily'] = _sw_nifty_swing
+        except Exception:
+            pass
+
+        # ── Sector ranking — use UNIFIED function ─────────
+        # Same formula and data as Monthly Swing and Sector Leaders
+        # Consistent ranking across all 3 tabs
+        # Uses cached result (1hr) — no extra API calls
+        _sw_rankings        = get_unified_sector_rankings(formula='weekly')
+        _sw_sector_status   = _sw_rankings['status_map']
+        _sw_sector_rs       = _sw_rankings['rs_map']
+        _sw_sector_rank_map = _sw_rankings['rank_map']
+
+        def _sw_get_sector(sym):
+            """Thin wrapper — uses single authoritative classify_stock_sector()."""
+            _sec = classify_stock_sector(sym)
+            # Map extended sectors back to ETF keys available in SW
+            _map = {
+                'PSU_BANK':'BANK', 'PVT_BANK':'BANK',
+                'HEALTHCARE':'PHARMA', 'UNKNOWN':'INFRA',
+            }
+            return _map.get(_sec, _sec) if _sec not in SECTOR_ETF_UNIFIED else _sec
 
         for idx, symbol in enumerate(stocks):
             pct       = int(((idx + 1) / total) * 100)
@@ -9905,9 +11620,8 @@ if _show_smaweekly:
                     # Also verify SMA50 is rising (healthy trend)
                     _sma50_5d    = float(df['SMA50'].iloc[-5]) if len(df) >= 5 else sma50
                     _sma50_slope = (sma50 - _sma50_5d) / _sma50_5d * 100 if _sma50_5d > 0 else 0
-                    # If SMA50 declining sharply → weak trend
                     if _sma50_slope < -0.5:
-                        continue  # both SMAs declining → not an uptrend
+                        continue  # SMA50 declining → not an uptrend
 
                     if trend_days >= 5:
                         for i in range(1, 6):
@@ -9919,6 +11633,31 @@ if _show_smaweekly:
                                 break
 
                 has_pullback = pullback_found and close >= sma20 * 1.002 and pct_above <= 5
+
+                # ── Volume Dry-Up on Pullback (SMA Weekly) ─
+                _sw_pb_vol_score = 0
+                _sw_pb_vol_label = ''
+                _sw_pb_vol_clr   = '#64748b'
+                _sw_pb_vol_ratio = 1.0
+                if has_pullback and pullback_age > 0:
+                    try:
+                        _sw_vol_avg = float(df['VolMA'].iloc[-pullback_age]) if 'VolMA' in df.columns else float(df['Volume'].iloc[-10:-3].mean())
+                        _sw_vol_pb  = float(df['Volume'].iloc[-pullback_age])
+                        _sw_pb_vol_ratio = round(_sw_vol_pb / _sw_vol_avg if _sw_vol_avg > 0 else 1.0, 2)
+                        if   _sw_pb_vol_ratio < 0.5:
+                            _sw_pb_vol_score = +15; _sw_pb_vol_label = '💧 Vol dry-up (perfect)'; _sw_pb_vol_clr = '#15803d'
+                        elif _sw_pb_vol_ratio < 0.7:
+                            _sw_pb_vol_score = +10; _sw_pb_vol_label = '💧 Vol dry-up (healthy)'; _sw_pb_vol_clr = '#16a34a'
+                        elif _sw_pb_vol_ratio < 1.0:
+                            _sw_pb_vol_score = +5;  _sw_pb_vol_label = '✅ Vol below avg';        _sw_pb_vol_clr = '#d97706'
+                        elif _sw_pb_vol_ratio < 1.5:
+                            _sw_pb_vol_score = 0;   _sw_pb_vol_label = '⚠️ Vol normal';           _sw_pb_vol_clr = '#d97706'
+                        elif _sw_pb_vol_ratio < 2.0:
+                            _sw_pb_vol_score = -10; _sw_pb_vol_label = '🔴 Vol high on pullback'; _sw_pb_vol_clr = '#dc2626'
+                        else:
+                            _sw_pb_vol_score = -20; _sw_pb_vol_label = '❌ Distribution detected';_sw_pb_vol_clr = '#991b1b'
+                    except Exception:
+                        _sw_pb_vol_ratio = 1.0
 
                 # ── Must have at least one signal ────────
                 if not has_fresh_cross and not has_pullback:
@@ -10049,9 +11788,99 @@ if _show_smaweekly:
                     if   pct_above_sma20 <= 2.0: _entry_badge = 'ENTER NOW';  _entry_clr = '#15803d'; _entry_bg = '#f0fdf4'; _entry_ico = '🟢'
                     else:                         _entry_badge = 'ACCEPTABLE'; _entry_clr = '#d97706'; _entry_bg = '#fffbeb'; _entry_ico = '🟡'
 
+                # ── Volatility Squeeze Detection ──────────────
+                # TTM Squeeze — Bollinger inside Keltner
+                # Squeeze fired + bullish = highest accuracy entry
+                _sw_sq = detect_volatility_squeeze(df)
+
+                # ── ADX — Trend Strength ───────────────────────
+                # Measures HOW STRONG the trend is
+                # ADX > 25 = strong trend = higher win rate
+                _sw_adx, _sw_pdi, _sw_mdi = calc_adx(df, period=14)
+                _sw_adx_score, _sw_adx_lbl, _sw_adx_clr = \
+                    get_adx_score(_sw_adx, _sw_pdi, _sw_mdi)
+
+                # ── Filter 1: Closing position in candle ──────
+                # week_pos < 0.25 = sellers won = REJECT
+                # week_pos > 0.75 = buyers won = +8 pts
+                _wp, _wp_score, _wp_label, _wp_reject = \
+                    get_candle_close_position(df, bars=1)
+                if _wp_reject:
+                    continue  # Sellers dominated — skip
+
+                # ── Filter 2: Prior candle body comparison ─────
+                # Growing body = +5, shrinking = -5
+                _cb_ratio, _cb_score, _cb_label = \
+                    get_candle_body_momentum(df)
+
+                # ── Beta calculation (daily) ──────────────
+                # MUST be here — before scoring — so score gets correct value
+                # Bearish Nifty: low beta rewarded, high beta penalised
+                # Bullish Nifty: high beta rewarded, low beta neutral
+                _sw_beta_val   = 1.0
+                _sw_beta_score = 0
+                _sw_beta_label = '➡️ Neutral'
+                _sw_beta_clr   = '#64748b'
+                _sw_beta_grade = 'NEUTRAL'
+                _sw_beta_bg    = '#f8fafc'
+                _sw_beta_bdr   = '#e2e8f0'
+                _sw_beta_ico   = '➡️'
+                try:
+                    if _sw_nifty_df is not None:
+                        _sw_beta_val = calc_stock_beta(df, _sw_nifty_df, periods=52)
+                        _sw_beta_score, _sw_beta_label, _sw_beta_clr = get_beta_score(
+                            _sw_beta_val, _sw_nifty_swing)
+                        _sw_beta_grade, _sw_beta_clr, _sw_beta_bg, _sw_beta_bdr, _sw_beta_ico = \
+                            get_beta_grade(_sw_beta_val)
+                except Exception:
+                    pass
+
+                # ── Sector check ──────────────────────────
+                # Same logic as Monthly Swing
+                # Sector bullish/bearish + RS rank scoring
+                _sw_sec_name = _sw_get_sector(sym_clean)
+                _sw_sec_bull, _sw_sec_gap = _sw_sector_status.get(
+                    _sw_sec_name, (True, 0))
+                _sw_sec_rank = _sw_sector_rank_map.get(_sw_sec_name, 5)
+                _sw_sec_rs   = _sw_sector_rs.get(_sw_sec_name, 0.0)
+
+                # Sector bullish/bearish — small context signal
+                # Strong sector = bonus, weak = minimal penalty
+                if   _sw_sec_bull and _sw_sec_gap > 1: score += 5
+                elif _sw_sec_bull:                      score += 2
+                else:                                   score -= 2
+
+                # Sector RS rank — bonus only, minimal penalty
+                # Stock quality (week_pos, RS vs sector) is
+                # the real differentiator, not sector rank alone
+                if   _sw_sec_rank <= 2: score += 10
+                elif _sw_sec_rank <= 4: score += 7
+                elif _sw_sec_rank <= 6: score += 3
+                elif _sw_sec_rank <= 9: score += 0
+                else:                   score -= 3
+
                 # ── Volatility score adjustment ───────────
                 score += _vol_score
 
+                # ── Volume dry-up score (pullback only) ───
+                score += _sw_pb_vol_score
+
+                # ── Beta score (dynamic Nifty state) ──────
+                score += _sw_beta_score
+
+                # ── Filter 1: Candle close position ───────
+                score += _wp_score
+
+                # ── Filter 2: Candle body momentum ────────
+                score += _cb_score
+
+                # ── Volatility Squeeze score ───────────────
+                score += _sw_sq.get('score', 0)
+
+                # ── ADX score ──────────────────────────────
+                score += _sw_adx_score
+
+                # Raw score pre-filter
                 if score < min_score:
                     continue
 
@@ -10063,11 +11892,25 @@ if _show_smaweekly:
                 if risk_d <= 0:
                     continue
 
+                # ── Filter 3: Dynamic risk sizing ─────────
+                # Adjusts position size based on Nifty state
+                # and personal drawdown % automatically
+                _sw_nifty_st = _sw_nifty_swing.get('state', 'UNKNOWN')
+                _sw_dd_pct   = getattr(st.session_state, '__dict__', {}).get('sw_drawdown_val', 0)
+                try:
+                    _sw_pk = st.session_state.get('peak_capital', capital)
+                    _sw_cr = st.session_state.get('current_capital', capital)
+                    _sw_dd_pct = max(0.0, (_sw_pk-_sw_cr)/_sw_pk*100) if _sw_pk>0 else 0.0
+                except Exception:
+                    _sw_dd_pct = 0.0
+                _adj_risk, _risk_lbl, _risk_clr, _risk_reason = \
+                    get_dynamic_risk_pct(risk_pct, _sw_nifty_st, _sw_dd_pct)
+
                 # Weekly ATR targets — correct for 3-7 day hold
                 t1     = round(entry + 0.5 * atr, 2)
                 t2     = round(entry + 1.0 * atr, 2)
                 t3     = round(entry + 1.5 * atr, 2)
-                qty    = max(1, int((capital * risk_pct / 100) / risk_d))
+                qty    = max(1, int((capital * _adj_risk / 100) / risk_d))
                 inv    = round(entry * qty, 2)
                 rr_t1  = round((t1 - entry) / risk_d, 1)
                 rr_t2  = round((t2 - entry) / risk_d, 1)
@@ -10132,6 +11975,30 @@ if _show_smaweekly:
                 score += _sw_pa.get('pa_total_score', 0)
                 if score < min_score:
                     continue
+
+                # ── Strict Entry Mode Filter ──────────────
+                # Runs AFTER PA analysis so candle_pattern is available
+                # Gate 1: PSAR bullish (mandatory)
+                # Gate 2: No bearish candles
+                # Gate 3: PA signal not RISKY
+                # Mild Bull is ALLOWED for weekly (daily candles less dramatic)
+                _sw_strict_on = st.session_state.get('sw_strict_mode', True)
+                if _sw_strict_on:
+                    # Gate 1 — PSAR must be bullish
+                    if not _sw_psar_bullish:
+                        continue  # PSAR bearish → skip
+
+                    # Gate 2 — No bearish candles
+                    _sw_candle_pat = _sw_pa.get('candle_pattern', '')
+                    _bad_candles   = ('Shooting Star', 'Bearish Engulfing',
+                                      'Bearish', 'Doji')
+                    if any(c in _sw_candle_pat for c in _bad_candles):
+                        continue  # bearish candle → skip
+
+                    # Gate 3 — PA signal not RISKY or AVOID
+                    _sw_pa_sig = _sw_pa.get('pa_signal', '')
+                    if '🔴' in _sw_pa_sig:
+                        continue  # PA risky → skip
 
                 # ── Daily Liquidity check ─────────────────
                 # For daily chart: use real daily volume (not estimated)
@@ -10203,6 +12070,52 @@ if _show_smaweekly:
                     'liq_bg': _liq_bg, 'liq_ico': _liq_ico,
                     'liq_turn': _liq_turn_str,
                     'src': src_lbl, 'mode': signal_type,
+                    'pb_vol_ratio':  _sw_pb_vol_ratio,
+                    'pb_vol_score':  _sw_pb_vol_score,
+                    'pb_vol_label':  _sw_pb_vol_label,
+                    'pb_vol_clr':    _sw_pb_vol_clr,
+                    # Filter 1 — candle close position
+                    'week_pos':      _wp,
+                    'wp_score':      _wp_score,
+                    'wp_label':      _wp_label,
+                    # Filter 2 — candle body momentum
+                    'cb_ratio':      _cb_ratio,
+                    'cb_score':      _cb_score,
+                    'cb_label':      _cb_label,
+                    # Volatility squeeze
+                    'squeeze':       _sw_sq,
+                    'squeeze_score': _sw_sq.get('score', 0),
+                    'squeeze_fired': _sw_sq.get('squeeze_fired', False),
+                    'squeeze_on':    _sw_sq.get('squeeze_on', False),
+                    'squeeze_label': _sw_sq.get('label', ''),
+                    'squeeze_weeks': _sw_sq.get('squeeze_weeks', 0),
+                    # ADX
+                    'adx':           _sw_adx,
+                    'adx_pdi':       _sw_pdi,
+                    'adx_mdi':       _sw_mdi,
+                    'adx_score':     _sw_adx_score,
+                    'adx_label':     _sw_adx_lbl,
+                    'adx_clr':       _sw_adx_clr,
+                    # Filter 3 — dynamic risk sizing
+                    'adj_risk_pct':  _adj_risk,
+                    'risk_label':    _risk_lbl,
+                    'risk_clr':      _risk_clr,
+                    'risk_reason':   _risk_reason,
+                    'beta':          round(_sw_beta_val, 2),
+                    'beta_score':    _sw_beta_score,
+                    'beta_label':    _sw_beta_label,
+                    'beta_grade':    _sw_beta_grade,
+                    'beta_clr':      _sw_beta_clr,
+                    'beta_bg':       _sw_beta_bg,
+                    'beta_bdr':      _sw_beta_bdr,
+                    'beta_ico':      _sw_beta_ico,
+                    'nifty_swing_state': _sw_nifty_swing.get('state','UNKNOWN'),
+                    'sec_name':    _sw_sec_name,
+                    'sec_bull':    _sw_sec_bull,
+                    'sec_gap':     _sw_sec_gap,
+                    'sec_rank':    _sw_sec_rank,
+                    'sec_rs_gap':  _sw_sec_rs,
+                    **get_fno_info(sym_clean),
                 })
                 # Calculate confident score using local function
                 _cs = calc_confident_score(results[-1])
@@ -10214,7 +12127,10 @@ if _show_smaweekly:
                         f"📈 {len(results)} signals found so far...</div>",
                         unsafe_allow_html=True)
 
-            except Exception:
+            except Exception as _sw_exc:
+                import traceback as _tb
+                _err = f"{symbol}: {str(_sw_exc)[:100]} | {_tb.format_exc().splitlines()[-1]}"
+                st.session_state.setdefault('sw_scan_errors',[]).append(_err)
                 continue
         _prog_sw.empty()
         _stat_sw.empty()
@@ -10259,6 +12175,113 @@ if _show_smaweekly:
     _sw_results  = st.session_state.get('sw_results', [])
     _sw_scantime = st.session_state.get('sw_scan_time', '')
 
+    # ── Debug: Show scan errors if no results ─────────────
+    _sw_errors = st.session_state.get('sw_scan_errors', [])
+    if _sw_errors and len(_sw_results) == 0:
+        with st.expander(f'🔍 Debug: {len(_sw_errors)} stocks had errors during scan'):
+            for _e in _sw_errors[:10]:
+                st.code(_e)
+        st.session_state['sw_scan_errors'] = []
+
+    # ── Expiry Zone Banner ─────────────────────────────
+    _dte  = days_to_expiry()
+    _zone = get_expiry_zone(_dte)
+    _exp  = get_monthly_expiry()
+    _exp_str = _exp.strftime('%d %b %Y')
+    if   _zone == 'FRESH':
+        _ban_bg='#f0fdf4'; _ban_bdr='#86efac'; _ban_clr='#15803d'
+        _ban_ico='🟢'; _ban_title='Post-Expiry — BEST Entry Window!'
+        _ban_msg=(f'New F&O cycle started · Enter any stock freely · '
+                  f'Fresh positions being built · Next expiry {_exp_str}')
+    elif _zone == 'DANGER':
+        _ban_bg='#fef2f2'; _ban_bdr='#fca5a5'; _ban_clr='#dc2626'
+        _ban_ico='🔴'; _ban_title=f'Expiry Week — {_dte} days to {_exp_str}'
+        _ban_msg=('F&O stocks may be price-pinned · '
+                  'Non-F&O stocks shown first · '
+                  'F&O stocks score penalised -15 pts · '
+                  'Consider waiting for post-expiry entry')
+    elif _zone == 'CAUTION':
+        _ban_bg='#fffbeb'; _ban_bdr='#fde68a'; _ban_clr='#d97706'
+        _ban_ico='⚠️'; _ban_title=f'Second Half — {_dte} days to {_exp_str}'
+        _ban_msg=('F&O stocks may slow down · '
+                  'Prefer Non-F&O stocks this week · '
+                  'F&O stocks score -8 pts · Reduce position size on F&O')
+    else:
+        _ban_bg='#f0fdf4'; _ban_bdr='#bbf7d0'; _ban_clr='#15803d'
+        _ban_ico='✅'; _ban_title=f'Safe Zone — {_dte} days to {_exp_str}'
+        _ban_msg='First half of month · Enter freely · No expiry pinning risk'
+
+    st.markdown(
+        f"<div style='background:{_ban_bg};border:1.5px solid {_ban_bdr};"
+        f"border-radius:10px;padding:10px 16px;margin-bottom:12px;"
+        f"display:flex;align-items:center;gap:12px'>"
+        f"<div style='font-size:22px'>{_ban_ico}</div>"
+        f"<div>"
+        f"<div style='font-size:12px;font-weight:800;color:{_ban_clr}'>"
+        f"F&O EXPIRY — {_ban_title}</div>"
+        f"<div style='font-size:11px;color:{_ban_clr};opacity:0.85;margin-top:2px'>"
+        f"{_ban_msg}</div>"
+        f"</div></div>",
+        unsafe_allow_html=True)
+
+    # ── Nifty State Banner for SMA Weekly ─────────────
+    _sw_nifty_now = st.session_state.get('nifty_swing_daily', {})
+    _sw_mkt_state = _sw_nifty_now.get('state', 'UNKNOWN')
+
+    if _sw_mkt_state == 'BEARISH':
+        st.markdown(
+            "<div style='background:#1f0c0c;border:2px solid #dc2626;"
+            "border-radius:12px;padding:14px 18px;margin-bottom:14px'>"
+            "<div style='font-size:14px;font-weight:800;color:#fca5a5'>"
+            "🔴 NIFTY BEARISH — SMA Weekly in Defensive Mode</div>"
+            "<div style='font-size:11px;color:#fecaca;margin-top:6px;line-height:1.8'>"
+            "⚡ <b>Only stocks outperforming Nifty (RS > 1.05)</b> are shown &nbsp;·&nbsp; "
+            "⚡ <b>Minimum score raised to 90</b> — only strongest signals &nbsp;·&nbsp; "
+            "⚡ <b>Position size auto-halved</b> — capital protection active &nbsp;·&nbsp; "
+            "⚡ <b>Max 2 open trades</b> recommended in bearish market"
+            "</div></div>",
+            unsafe_allow_html=True)
+
+    elif _sw_mkt_state == 'EARLY_BEAR':
+        st.markdown(
+            "<div style='background:#1c0d05;border:2px solid #ea580c;"
+            "border-radius:12px;padding:14px 18px;margin-bottom:14px'>"
+            "<div style='font-size:14px;font-weight:800;color:#fdba74'>"
+            "🟠 NIFTY EARLY BEAR — Nifty below SMA20, above SMA50</div>"
+            "<div style='font-size:11px;color:#fed7aa;margin-top:6px;line-height:1.8'>"
+            "⚡ <b>Transitioning to bearish</b> — reduce exposure now &nbsp;·&nbsp; "
+            "⚡ <b>Position size 35% of normal</b> &nbsp;·&nbsp; "
+            "⚡ <b>Only beta &lt; 0.8 stocks</b> — defensive only &nbsp;·&nbsp; "
+            "⚡ <b>No new Monthly Swing entries</b> recommended"
+            "</div></div>",
+            unsafe_allow_html=True)
+
+    elif _sw_mkt_state == 'LATE_BULL':
+        st.markdown(
+            "<div style='background:#1c150a;border:1.5px solid #d97706;"
+            "border-radius:10px;padding:10px 16px;margin-bottom:12px'>"
+            "<div style='font-size:12px;font-weight:800;color:#fcd34d'>"
+            "🟡 NIFTY LATE BULL — Trend Flattening · Transition Warning</div>"
+            "<div style='font-size:11px;color:#fde68a;margin-top:4px'>"
+            "SMA20 slope weakening — may be peaking · "
+            "Position sizes reduced to 75% · "
+            "Prefer defensive sectors (FMCG, Pharma, IT) · "
+            "Tighten stop losses on existing positions"
+            "</div></div>",
+            unsafe_allow_html=True)
+
+    elif _sw_mkt_state == 'CAUTION':
+        st.markdown(
+            "<div style='background:#1c150a;border:1.5px solid #d97706;"
+            "border-radius:10px;padding:10px 16px;margin-bottom:12px'>"
+            "<div style='font-size:12px;font-weight:800;color:#fcd34d'>"
+            "⚠️ NIFTY CAUTION — Selective entry mode</div>"
+            "<div style='font-size:11px;color:#fde68a;margin-top:4px'>"
+            "Position sizes reduced · Only GOOD+ setups shown · "
+            "Prefer beta &lt; 1.0 and top sector stocks"
+            "</div></div>",
+            unsafe_allow_html=True)
+
     if not _sw_results:
         st.markdown("""
         <div style='background:#1a2035;border-radius:16px;padding:32px;
@@ -10277,13 +12300,15 @@ if _show_smaweekly:
         _n_cross = len([r for r in _sw_results if r.get('signal_type') in ('cross','both')])
         _n_pb    = len([r for r in _sw_results if r.get('signal_type') in ('pullback','both')])
         _n_both  = len([r for r in _sw_results if r.get('signal_type') == 'both'])
+        _n_sq    = len([r for r in _sw_results if r.get('squeeze_fired') or r.get('squeeze_on')])
 
         _sw_filter = st.radio(
             "Filter",
             [f"📊 All ({_n_all})",
              f"🔀 Fresh Cross ({_n_cross})",
              f"📉 Pullback Bounce ({_n_pb})",
-             f"🔥 Both Signals ({_n_both})"],
+             f"🔥 Both Signals ({_n_both})",
+             f"🔥 Squeeze ({_n_sq})"],
             horizontal=True, key="sw_filter",
             help="Filter signals by type")
 
@@ -10294,6 +12319,13 @@ if _show_smaweekly:
             _sw_filtered = [r for r in _sw_results if r.get('signal_type') in ('pullback','both')]
         elif 'Both Signals' in _sw_filter:
             _sw_filtered = [r for r in _sw_results if r.get('signal_type') == 'both']
+        elif 'Squeeze' in _sw_filter:
+            _sw_filtered = [r for r in _sw_results
+                            if r.get('squeeze_fired') or r.get('squeeze_on')]
+            _sw_filtered = sorted(_sw_filtered,
+                                   key=lambda x: (x.get('squeeze_fired',False),
+                                                  x.get('squeeze_weeks',0)),
+                                   reverse=True)
         else:
             _sw_filtered = _sw_results
 
@@ -10542,86 +12574,155 @@ if _show_smaweekly:
                 unsafe_allow_html=True)
 
             # ── Header ─────────────────────────────────
-            st.markdown(f"""
-            <div style='display:flex;justify-content:space-between;
-                        align-items:flex-start;flex-wrap:wrap;gap:8px;
-                        margin-bottom:14px'>
-                <div>
-                    <div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'>
-                        <span style='font-size:22px;font-weight:800;color:#1a2035'>{_sym}</span>
-                        <span style='background:{_conf_bg};color:{_conf_clr};font-size:13px;
-                                     font-weight:800;border-radius:8px;padding:4px 12px;
-                                     border:2px solid {_conf_bdr}'>
-                            ⭐ {_conf}/100 · {_conf_lbl}
-                        </span>
-                        <span style='background:{_sc_bg};color:{_sc_clr};font-size:10px;
-                                     font-weight:700;border-radius:6px;padding:2px 8px'>
-                            Scanner {_sc}/100
-                        </span>
-                        <span style='background:{_cap_bg};color:{_cap_clr};font-size:10px;
-                                     font-weight:700;border-radius:4px;padding:2px 8px;
-                                     border:1px solid {_cap_border}'>
-                            {_cap_ico} {_cap_name}
-                        </span>
-                        <span style='background:{_liq_bg};color:{_liq_clr};font-size:10px;
-                                     font-weight:700;border-radius:4px;padding:2px 8px;
-                                     border:1px solid {_liq_border}'>
-                            {_liq_ico} {_liq_grade} · {_liq_turn}
-                        </span>
-                        <span style='background:{_sw_r.get("vol_bg","#f8fafc")};
-                                     color:{_sw_r.get("vol_clr","#64748b")};font-size:10px;
-                                     font-weight:700;border-radius:4px;padding:2px 8px;
-                                     border:1px solid {_sw_r.get("vol_clr","#64748b")}44'>
-                            {_sw_r.get("vol_ico","⚪")} Vol {_sw_r.get("vol_atr_pct",0):.1f}% {_sw_r.get("vol_grade","")}
-                        </span>
-                        <span style='background:{_sw_r.get("entry_bg","#fffbeb")};
-                                     color:{_sw_r.get("entry_clr","#d97706")};font-size:10px;
-                                     font-weight:700;border-radius:4px;padding:2px 8px;
-                                     border:1px solid {_sw_r.get("entry_clr","#d97706")}44'>
-                            {_sw_r.get("entry_ico","🟡")} {_sw_r.get("entry_badge","ACCEPTABLE")}
-                        </span>
-                    </div>
-                    <div style='font-size:12px;color:#64748b;margin-top:5px'>
-                        <span style='color:{_cage_clr};font-weight:700'>{_cage_lbl}</span>
-                        &nbsp;·&nbsp; RSI {_rsi}
-                        &nbsp;·&nbsp; Vol {_volx}×
-                        &nbsp;·&nbsp;
-                        <span style='color:{_wchg_clr}'>Week {_wchg:+.1f}%</span>
-                        &nbsp;·&nbsp;
-                        <span style='color:{"#15803d" if _sw_r.get("sma20_slope",0)>0 else "#dc2626"}'>
-                            SMA20 slope {_sw_r.get("sma20_slope",0):+.2f}%
-                        </span>
-                    </div>
-                </div>
-                <div style='text-align:right'>
-                    <div style='font-size:24px;font-weight:800;
-                                color:#1a2035;font-family:JetBrains Mono'>
-                        ₹{_close:,.2f}
-                    </div>
-                    <div style='font-size:11px;color:#64748b'>
-                        SMA20 ₹{_sma20:,.2f} · SMA50 ₹{_sma50:,.2f}
-                    </div>
-                </div>
-            </div>""", unsafe_allow_html=True)
+            _fno_note_html = (
+                f"<div style='font-size:10px;color:{_sw_r.get('fno_clr','#64748b')};"
+                f"margin-top:3px;padding:3px 8px;"
+                f"background:{_sw_r.get('fno_bg','#f8fafc')};border-radius:4px'>"
+                f"{_sw_r.get('fno_note','')}</div>"
+            ) if _sw_r.get('fno_note') else ""
+            _slope_clr = '#15803d' if _sw_r.get('sma20_slope',0)>0 else '#dc2626'
+            _vol_ico   = _sw_r.get('vol_ico','⚪')
+            _vol_atr   = _sw_r.get('vol_atr_pct',0)
+            _vol_grd   = _sw_r.get('vol_grade','')
+            _vol_bg2   = _sw_r.get('vol_bg','#f8fafc')
+            _vol_clr2  = _sw_r.get('vol_clr','#64748b')
+            _ent_ico   = _sw_r.get('entry_ico','🟡')
+            _ent_badge = _sw_r.get('entry_badge','ACCEPTABLE')
+            _ent_clr2  = _sw_r.get('entry_clr','#d97706')
+            _ent_bg2   = _sw_r.get('entry_bg','#fffbeb')
+            _fno_badge2= _sw_r.get('fno_badge','✅ Non-F&O')
+            _fno_clr2  = _sw_r.get('fno_clr','#64748b')
+            _fno_bg2   = _sw_r.get('fno_bg','#f8fafc')
+            _fno_bdr2  = _sw_r.get('fno_bdr','#e2e8f0')
+            _sw_slope  = _sw_r.get('sma20_slope',0)
+            # Sector rank badge
+            _sw_sec_name = _sw_r.get('sec_name', '')
+            _sw_sec_rank = _sw_r.get('sec_rank', 5)
+            _sw_sec_rs   = _sw_r.get('sec_rs_gap', 0.0)
+            _sw_sec_bull = _sw_r.get('sec_bull', True)
+            _sw_sec_rs_s = f'+{_sw_sec_rs:.1f}%' if _sw_sec_rs >= 0 else f'{_sw_sec_rs:.1f}%'
+            if   _sw_sec_rank <= 2: _sw_sec_rank_clr='#15803d'; _sw_sec_rank_ico='🥇'
+            elif _sw_sec_rank <= 4: _sw_sec_rank_clr='#16a34a'; _sw_sec_rank_ico='🥈'
+            elif _sw_sec_rank <= 6: _sw_sec_rank_clr='#d97706'; _sw_sec_rank_ico='🥉'
+            else:                   _sw_sec_rank_clr='#dc2626'; _sw_sec_rank_ico='⬇️'
+            # Beta badge
+            _sw_beta       = _sw_r.get('beta', 1.0)
+            _sw_beta_grade = _sw_r.get('beta_grade', 'NEUTRAL')
+            _sw_beta_clr   = _sw_r.get('beta_clr', '#64748b')
+            _sw_beta_bg    = _sw_r.get('beta_bg', '#f8fafc')
+            _sw_beta_bdr   = _sw_r.get('beta_bdr', '#e2e8f0')
+            _sw_beta_ico   = _sw_r.get('beta_ico', '➡️')
+            _sw_beta_score = _sw_r.get('beta_score', 0)
+            _sw_beta_ss    = f'+{_sw_beta_score}' if _sw_beta_score > 0 else str(_sw_beta_score)
+
+            st.markdown(
+                f"<div style='display:flex;justify-content:space-between;"
+                f"align-items:flex-start;flex-wrap:wrap;gap:8px;margin-bottom:14px'>"
+                f"<div>"
+                f"<div style='display:flex;align-items:center;gap:8px;flex-wrap:wrap'>"
+                f"<span style='font-size:22px;font-weight:800;color:#1a2035'>{_sym}</span>"
+                f"<span style='background:{_conf_bg};color:{_conf_clr};font-size:13px;"
+                f"font-weight:800;border-radius:8px;padding:4px 12px;"
+                f"border:2px solid {_conf_bdr}'>⭐ {_conf}/100 · {_conf_lbl}</span>"
+                f"<span style='background:{_sc_bg};color:{_sc_clr};font-size:10px;"
+                f"font-weight:700;border-radius:6px;padding:2px 8px'>"
+                f"Scanner {_sc}/100</span>"
+                f"<span style='background:{_cap_bg};color:{_cap_clr};font-size:10px;"
+                f"font-weight:700;border-radius:4px;padding:2px 8px;"
+                f"border:1px solid {_cap_border}'>{_cap_ico} {_cap_name}</span>"
+                f"<span style='background:{_liq_bg};color:{_liq_clr};font-size:10px;"
+                f"font-weight:700;border-radius:4px;padding:2px 8px;"
+                f"border:1px solid {_liq_border}'>{_liq_ico} {_liq_grade} · {_liq_turn}</span>"
+                f"<span style='background:{_vol_bg2};color:{_vol_clr2};font-size:10px;"
+                f"font-weight:700;border-radius:4px;padding:2px 8px;"
+                f"border:1px solid {_vol_clr2}44'>{_vol_ico} Vol {_vol_atr:.1f}% {_vol_grd}</span>"
+                f"<span style='background:{_ent_bg2};color:{_ent_clr2};font-size:10px;"
+                f"font-weight:700;border-radius:4px;padding:2px 8px;"
+                f"border:1px solid {_ent_clr2}44'>{_ent_ico} {_ent_badge}</span>"
+                f"<span style='background:{_fno_bg2};color:{_fno_clr2};font-size:10px;"
+                f"font-weight:700;border-radius:4px;padding:2px 8px;"
+                f"border:1px solid {_fno_bdr2}'>{_fno_badge2}</span>"
+                f"<span style='background:{_sw_beta_bg};color:{_sw_beta_clr};"
+                f"font-size:10px;font-weight:700;border-radius:4px;padding:2px 8px;"
+                f"border:1px solid {_sw_beta_bdr}'>"
+                f"{_sw_beta_ico} β {_sw_beta:.2f} {_sw_beta_grade} ({_sw_beta_ss}pts)</span>"
+                f"</div>"
+                f"{_fno_note_html}"
+                f"<div style='font-size:12px;color:#64748b;margin-top:5px'>"
+                f"<span style='color:{_cage_clr};font-weight:700'>{_cage_lbl}</span>"
+                f"&nbsp;·&nbsp; RSI {_rsi}"
+                f"&nbsp;·&nbsp; Vol {_volx}×"
+                f"&nbsp;·&nbsp; <span style='color:{_wchg_clr}'>Week {_wchg:+.1f}%</span>"
+                f"&nbsp;·&nbsp; <span style='color:{_slope_clr}'>SMA20 slope {_sw_slope:+.2f}%</span>"
+                f"&nbsp;·&nbsp; <span style='color:{_sw_sec_rank_clr};font-weight:700'>"
+                f"{_sw_sec_rank_ico} Sector {_sw_sec_name} Rank #{_sw_sec_rank} ({_sw_sec_rs_s} vs Nifty)</span>"
+                f"</div>"
+                f"</div>"
+                f"<div style='text-align:right'>"
+                f"<div style='font-size:24px;font-weight:800;color:#1a2035;font-family:JetBrains Mono'>"
+                f"₹{_close:,.2f}</div>"
+                f"<div style='font-size:11px;color:#64748b'>"
+                f"SMA20 ₹{_sma20:,.2f} · SMA50 ₹{_sma50:,.2f}</div>"
+                f"</div></div>",
+                unsafe_allow_html=True)
 
             # ── SMA bar ─────────────────────────────────
-            st.markdown(f"""
-            <div style='background:#f8fafc;border-radius:8px;padding:10px 14px;
-                        margin-bottom:12px;font-size:11px;color:#64748b'>
-                <div style='display:flex;justify-content:space-between;margin-bottom:4px'>
-                    <span>SMA50 ₹{_sma50:,.2f}</span>
-                    <span style='color:#d97706;font-weight:700'>SMA20 ₹{_sma20:,.2f}</span>
-                    <span style='color:#1a2035;font-weight:700'>Price ₹{_close:,.2f}</span>
-                </div>
-                <div style='background:#e2e8f0;border-radius:4px;height:6px;position:relative'>
-                    <div style='background:#d97706;height:6px;border-radius:4px;width:60%'></div>
-                    <div style='background:#1a2035;height:10px;width:3px;border-radius:2px;
-                                position:absolute;top:-2px;left:72%'></div>
-                </div>
-                <div style='font-size:10px;color:#94a3b8;margin-top:3px'>
-                    ATR = ₹{_atr:,.2f} ({_sw_r.get('atr_label','weekly')} ATR · daily ₹{_sw_r.get('atr14',_atr):,.2f}) · Risk/share = ₹{_rd:,.2f}
-                </div>
-            </div>""", unsafe_allow_html=True)
+            _atr14_val = _sw_r.get('atr14', _atr)
+            _atr_lbl2  = _sw_r.get('atr_label','weekly')
+            st.markdown(
+                f"<div style='background:#f8fafc;border-radius:8px;padding:10px 14px;"
+                f"margin-bottom:12px;font-size:11px;color:#64748b'>"
+                f"<div style='display:flex;justify-content:space-between;margin-bottom:4px'>"
+                f"<span>SMA50 ₹{_sma50:,.2f}</span>"
+                f"<span style='color:#d97706;font-weight:700'>SMA20 ₹{_sma20:,.2f}</span>"
+                f"<span style='color:#1a2035;font-weight:700'>Price ₹{_close:,.2f}</span>"
+                f"</div>"
+                f"<div style='background:#e2e8f0;border-radius:4px;height:6px;position:relative'>"
+                f"<div style='background:#d97706;height:6px;border-radius:4px;width:60%'></div>"
+                f"<div style='background:#1a2035;height:10px;width:3px;border-radius:2px;"
+                f"position:absolute;top:-2px;left:72%'></div></div>"
+                f"<div style='font-size:10px;color:#94a3b8;margin-top:3px'>"
+                f"ATR = ₹{_atr:,.2f} ({_atr_lbl2} ATR · daily ₹{_atr14_val:,.2f}) · Risk/share = ₹{_rd:,.2f}"
+                f"</div>"
+                + (f"<div style='font-size:10px;color:{_sw_r.get('pb_vol_clr','#64748b')};"
+                   f"font-weight:700;margin-top:4px'>"
+                   f"{_sw_r.get('pb_vol_label','')} "
+                   f"({_sw_r.get('pb_vol_ratio',1.0):.2f}× avg vol on pullback)</div>"
+                   if _sw_r.get('pb_vol_label') else "")
+                + (f"<div style='font-size:10px;font-weight:700;margin-top:4px;"
+                   f"color:{'#15803d' if _sw_r.get('wp_score',0)>0 else '#dc2626'}'>"
+                   f"📍 Candle close: {_sw_r.get('wp_label','')} "
+                   f"(pos {_sw_r.get('week_pos',0.5):.0%} of range)"
+                   f"</div>")
+                + (f"<div style='font-size:10px;font-weight:700;margin-top:4px;"
+                   f"color:{'#15803d' if _sw_r.get('cb_score',0)>0 else '#d97706' if _sw_r.get('cb_score',0)==0 else '#dc2626'}'>"
+                   f"📊 Body momentum: {_sw_r.get('cb_label','')} "
+                   f"({'+' if _sw_r.get('cb_score',0)>=0 else ''}{_sw_r.get('cb_score',0)}pts)"
+                   f"</div>")
+                + (f"<div style='font-size:11px;font-weight:800;margin-top:5px;padding:4px 8px;"
+                   f"background:{'#f0fdf4' if _sw_r.get('squeeze_fired') else '#fffbeb' if _sw_r.get('squeeze_on') else '#f8fafc'};"
+                   f"border-radius:6px;border:1px solid "
+                   f"{'#86efac' if _sw_r.get('squeeze_fired') else '#fcd34d' if _sw_r.get('squeeze_on') else '#e2e8f0'};"
+                   f"color:{_sw_r.get('squeeze',{}).get('clr','#64748b')}'>"
+                   f"{_sw_r.get('squeeze',{}).get('ico','➡️')} "
+                   f"{_sw_r.get('squeeze_label','')}"
+                   + (f" · BB {_sw_r.get('squeeze',{}).get('bb_width_change',0):+.0f}% width"
+                      if _sw_r.get('squeeze_fired') else "")
+                   + f" ({'+' if _sw_r.get('squeeze_score',0)>=0 else ''}"
+                   f"{_sw_r.get('squeeze_score',0)}pts)</div>"
+                   if _sw_r.get('squeeze_label') else "")
+                + (f"<div style='font-size:10px;font-weight:700;margin-top:4px;"
+                   f"color:{_sw_r.get('adx_clr','#64748b')}'>"
+                   f"{_sw_r.get('adx_label','')}</div>"
+                   if _sw_r.get('adx_label') else "")
+                + (f"<div style='font-size:10px;font-weight:700;margin-top:4px;"
+                   f"color:{_sw_r.get('risk_clr','#64748b')}'>"
+                   f"⚖️ Position sizing: {_sw_r.get('risk_label','')} "
+                   f"{'— ' + _sw_r.get('risk_reason','') if _sw_r.get('risk_reason') else ''}"
+                   f"</div>"
+                   if _sw_r.get('risk_reason','') != 'No adjustment' else "")
+                + "</div>",
+                unsafe_allow_html=True)
 
             # ── Trend factors row ────────────────────────
             _hh      = _sw_r.get('hh', False)
@@ -10631,68 +12732,91 @@ if _show_smaweekly:
             _sl_str  = _sw_r.get('sma20_slope', 0)
             _sl_clr  = '#15803d' if _sl_str >= 0.5 else ('#d97706' if _sl_str > 0 else '#dc2626')
             _sl_lbl  = 'Strong ↑' if _sl_str >= 1.0 else ('Rising ↑' if _sl_str >= 0.5 else 'Weak ↑')
-            st.markdown(f"""
-            <div style='background:#f8fafc;border-radius:8px;padding:8px 14px;
-                        margin-bottom:10px;display:flex;gap:16px;flex-wrap:wrap;
-                        font-size:11px'>
-                <span>📈 HH: <b style='color:{"#15803d" if _hh else "#dc2626"}'>{"✅ Yes" if _hh else "❌ No"}</b></span>
-                <span>📈 HL: <b style='color:{"#15803d" if _hl else "#dc2626"}'>{"✅ Yes" if _hl else "❌ No"}</b></span>
-                <span>📐 SMA20 slope: <b style='color:{_sl_clr}'>{_sl_lbl} {_sl_str:+.2f}%</b></span>
-                <span>📏 vs SMA50: <b style='color:{"#dc2626" if _ext else "#15803d"}'>{"⚠️ Extended" if _ext else "✅ Normal"} +{_sma50p:.1f}%</b></span>
-                <span>📅 Trend: <b style='color:#1d4ed8'>{_sw_r.get("trend_days",0)}d</b></span>
-            </div>""", unsafe_allow_html=True)
+            _hh_clr  = '#15803d' if _hh else '#dc2626'
+            _hl_clr  = '#15803d' if _hl else '#dc2626'
+            _ext_clr = '#dc2626' if _ext else '#15803d'
+            st.markdown(
+                f"<div style='background:#f8fafc;border-radius:8px;padding:8px 14px;"
+                f"margin-bottom:10px;display:flex;gap:16px;flex-wrap:wrap;font-size:11px'>"
+                f"<span>📐 SMA20 slope: <b style='color:{_sl_clr}'>{_sl_lbl} {_sl_str:+.2f}%</b></span>"
+                f"<span>📏 vs SMA50: <b style='color:{_ext_clr}'>{'⚠️ Extended' if _ext else '✅ Normal'} +{_sma50p:.1f}%</b></span>"
+                f"<span>📅 Trend: <b style='color:#1d4ed8'>{_sw_r.get('trend_days',0)}d</b></span>"
+                f"</div>",
+                unsafe_allow_html=True)
 
             # ── Targets ─────────────────────────────────
             _sl_pct  = round((_entry - _sl)  / _entry * 100, 2) if _entry > 0 else 0
             _t1_pct  = round((_t1 - _entry)  / _entry * 100, 2) if _entry > 0 else 0
             _t2_pct  = round((_t2 - _entry)  / _entry * 100, 2) if _entry > 0 else 0
             _t3_pct  = round((_t3 - _entry)  / _entry * 100, 2) if _entry > 0 else 0
-            st.markdown(f"""
-            <div style='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px'>
-                <div style='background:#fee2e2;border-radius:10px;padding:10px 14px;
-                            flex:1;min-width:80px;text-align:center'>
-                    <div style='font-size:9px;font-weight:700;color:#dc2626;
-                                letter-spacing:1px'>STOP LOSS</div>
-                    <div style='font-size:17px;font-weight:800;color:#dc2626;
-                                font-family:JetBrains Mono;margin:3px 0'>₹{_sl:,.2f}</div>
-                    <div style='font-size:10px;color:#dc2626'>−{_sl_pct:.2f}% · below SMA20</div>
-                </div>
-                <div style='background:#eff6ff;border-radius:10px;padding:10px 14px;
-                            flex:1;min-width:80px;text-align:center'>
-                    <div style='font-size:9px;font-weight:700;color:#1d4ed8;
-                                letter-spacing:1px'>T1 — R:R {_rr1}:1</div>
-                    <div style='font-size:17px;font-weight:800;color:#1d4ed8;
-                                font-family:JetBrains Mono;margin:3px 0'>₹{_t1:,.2f}</div>
-                    <div style='font-size:10px;color:#1d4ed8'>+{_t1_pct:.2f}% · 0.5× wkly ATR · Book 50%</div>
-                </div>
-                <div style='background:#f5f3ff;border-radius:10px;padding:10px 14px;
-                            flex:1;min-width:80px;text-align:center'>
-                    <div style='font-size:9px;font-weight:700;color:#7c3aed;
-                                letter-spacing:1px'>T2 — R:R {_rr2}:1</div>
-                    <div style='font-size:17px;font-weight:800;color:#7c3aed;
-                                font-family:JetBrains Mono;margin:3px 0'>₹{_t2:,.2f}</div>
-                    <div style='font-size:10px;color:#7c3aed'>+{_t2_pct:.2f}% · 1.0× wkly ATR · Trail SL</div>
-                </div>
-                <div style='background:#f0fdf4;border-radius:10px;padding:10px 14px;
-                            flex:1;min-width:80px;text-align:center'>
-                    <div style='font-size:9px;font-weight:700;color:#15803d;
-                                letter-spacing:1px'>T3 — STRETCH</div>
-                    <div style='font-size:17px;font-weight:800;color:#15803d;
-                                font-family:JetBrains Mono;margin:3px 0'>₹{_t3:,.2f}</div>
-                    <div style='font-size:10px;color:#15803d'>+{_t3_pct:.2f}% · 1.5× wkly ATR · Let run</div>
-                </div>
-            </div>""", unsafe_allow_html=True)
+            _sw_atr_val   = _sw_r.get('atr', 0)
+            _sw_rd        = _sw_r.get('risk_per_share', _entry - _sl)
+            _sw_adj_risk  = _sw_r.get('adj_risk_pct', _sw_risk_pct)
+            _sw_risk_lbl  = _sw_r.get('risk_label', '')
+            _sw_risk_rsn  = _sw_r.get('risk_reason', '')
+            st.markdown(
+                f"<div style='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px'>"
+                # STOP LOSS box — enhanced with ATR info
+                f"<div style='background:#fee2e2;border:2px solid #fca5a5;border-radius:10px;"
+                f"padding:10px 14px;flex:1;min-width:80px;text-align:center'>"
+                f"<div style='font-size:9px;font-weight:700;color:#dc2626;letter-spacing:1px'>STOP LOSS</div>"
+                f"<div style='font-size:17px;font-weight:800;color:#dc2626;"
+                f"font-family:JetBrains Mono;margin:3px 0'>₹{_sl:,.2f}</div>"
+                f"<div style='font-size:10px;color:#dc2626'>−{_sl_pct:.2f}% below SMA20</div>"
+                f"<div style='font-size:9px;color:#b91c1c;margin-top:3px;font-weight:700'>"
+                f"ATR ₹{_sw_atr_val:,.2f} · Risk ₹{_sw_rd:,.2f}/share</div>"
+                f"</div>"
+                f"<div style='background:#eff6ff;border-radius:10px;padding:10px 14px;"
+                f"flex:1;min-width:80px;text-align:center'>"
+                f"<div style='font-size:9px;font-weight:700;color:#1d4ed8;letter-spacing:1px'>T1 — R:R {_rr1}:1</div>"
+                f"<div style='font-size:17px;font-weight:800;color:#1d4ed8;font-family:JetBrains Mono;margin:3px 0'>₹{_t1:,.2f}</div>"
+                f"<div style='font-size:10px;color:#1d4ed8'>+{_t1_pct:.2f}% · 0.5× ATR · Book 50%</div></div>"
+                f"<div style='background:#f5f3ff;border-radius:10px;padding:10px 14px;"
+                f"flex:1;min-width:80px;text-align:center'>"
+                f"<div style='font-size:9px;font-weight:700;color:#7c3aed;letter-spacing:1px'>T2 — R:R {_rr2}:1</div>"
+                f"<div style='font-size:17px;font-weight:800;color:#7c3aed;font-family:JetBrains Mono;margin:3px 0'>₹{_t2:,.2f}</div>"
+                f"<div style='font-size:10px;color:#7c3aed'>+{_t2_pct:.2f}% · 1.0× ATR · Trail SL</div></div>"
+                f"<div style='background:#f0fdf4;border-radius:10px;padding:10px 14px;"
+                f"flex:1;min-width:80px;text-align:center'>"
+                f"<div style='font-size:9px;font-weight:700;color:#15803d;letter-spacing:1px'>T3 — STRETCH</div>"
+                f"<div style='font-size:17px;font-weight:800;color:#15803d;font-family:JetBrains Mono;margin:3px 0'>₹{_t3:,.2f}</div>"
+                f"<div style='font-size:10px;color:#15803d'>+{_t3_pct:.2f}% · 1.5× ATR · Let run</div></div>"
+                f"</div>",
+                unsafe_allow_html=True)
 
-            # ── Position info + card close ───────────────
-            st.markdown(f"""
-            <div style='background:#f8fafc;border-radius:8px;padding:8px 14px;
-                        font-size:11px;color:#64748b;display:flex;gap:20px;flex-wrap:wrap'>
-                <span>📦 Qty: <b style='color:#1a2035'>{_qty} shares</b></span>
-                <span>💰 Investment: <b style='color:#1a2035'>₹{_inv:,.0f}</b></span>
-                <span>⚠️ Max Risk: <b style='color:#dc2626'>₹{int(_qty*_rd):,}</b></span>
-                <span>🎯 Capital: <b style='color:#1a2035'>₹{_sw_capital:,.0f}</b></span>
-                <span>📊 Risk: <b style='color:#1a2035'>{_sw_risk_pct}%</b></span>
-            </div>""", unsafe_allow_html=True)
+            # ── Position sizing info ─────────────────────
+            # Shows ATR-based qty + dynamic risk adjustment
+            _sw_max_loss = int(_qty * _sw_rd)
+            _sw_orig_qty = max(1, int((_sw_capital * _sw_risk_pct / 100) / _sw_rd)) \
+                           if _sw_rd > 0 else _qty
+            _sw_size_reduced = _qty < _sw_orig_qty * 0.95
+            st.markdown(
+                f"<div style='background:#f8fafc;border:1.5px solid "
+                f"{'#fcd34d' if _sw_size_reduced else '#e2e8f0'};"
+                f"border-radius:10px;padding:10px 14px;margin-bottom:8px'>"
+                # Row 1 — main position info
+                f"<div style='display:flex;gap:20px;flex-wrap:wrap;font-size:11px;color:#64748b'>"
+                f"<span>📦 Qty: <b style='color:#1a2035'>{_qty} shares</b></span>"
+                f"<span>💰 Invest: <b style='color:#1a2035'>₹{_inv:,.0f}</b></span>"
+                f"<span>⚠️ Max loss if SL hit: <b style='color:#dc2626'>₹{_sw_max_loss:,}</b></span>"
+                f"<span>🎯 Capital: <b style='color:#1a2035'>₹{_sw_capital:,.0f}</b></span>"
+                f"</div>"
+                # Row 2 — ATR sizing explanation
+                f"<div style='margin-top:6px;padding-top:6px;border-top:1px solid #e2e8f0;"
+                f"font-size:10px;color:#64748b'>"
+                f"📐 <b>ATR sizing:</b> ₹{_sw_capital:,.0f} × {_sw_adj_risk:.2f}% ÷ ₹{_sw_rd:.2f}/share = "
+                f"<b style='color:#1a2035'>{_qty} shares</b>"
+                + (f" &nbsp;<span style='color:#d97706;font-weight:700'>"
+                   f"(reduced from {_sw_orig_qty} — {_sw_risk_rsn})</span>"
+                   if _sw_size_reduced else "")
+                + f"</div>"
+                # Row 3 — risk label if adjusted
+                + (f"<div style='margin-top:4px;font-size:10px;font-weight:700;"
+                   f"color:{_sw_r.get('risk_clr','#64748b')}'>"
+                   f"⚖️ {_sw_risk_lbl}</div>"
+                   if _sw_size_reduced else "")
+                + f"</div>",
+                unsafe_allow_html=True)
 
             # ── Confident Score Breakdown Strip ─────────────
             st.markdown(
@@ -10721,7 +12845,7 @@ if _show_smaweekly:
                 f"</div>"
                 f"<div style='background:white;border-radius:6px;padding:4px 8px;"
                 f"text-align:center;min-width:44px'>"
-                f"<div style='font-size:8px;color:#94a3b8;font-weight:700'>HH+HL</div>"
+                f"<div style='font-size:8px;color:#94a3b8;font-weight:700'>STRUCT</div>"
                 f"<div style='font-size:13px;font-weight:800;color:#1a2035'>{_c3}/15</div>"
                 f"</div>"
                 f"<div style='background:white;border-radius:6px;padding:4px 8px;"
@@ -10738,6 +12862,21 @@ if _show_smaweekly:
                 f"text-align:center;min-width:44px'>"
                 f"<div style='font-size:8px;color:#94a3b8;font-weight:700'>LIQ</div>"
                 f"<div style='font-size:13px;font-weight:800;color:#1a2035'>{_c6}/5</div>"
+                f"</div>"
+                f"<div style='background:white;border-radius:6px;padding:4px 8px;"
+                f"text-align:center;min-width:44px'>"
+                f"<div style='font-size:8px;color:#94a3b8;font-weight:700'>F&O</div>"
+                f"<div style='font-size:13px;font-weight:800;"
+                f"color:{'#15803d' if _sw_r.get('c7_fno',0)>0 else '#dc2626' if _sw_r.get('c7_fno',0)<0 else '#1a2035'}'>"
+                f"{'+' if _sw_r.get('c7_fno',0)>0 else ''}{_sw_r.get('c7_fno',0)}</div>"
+                f"</div>"
+                f"<div style='background:white;border-radius:6px;padding:4px 8px;"
+                f"text-align:center;min-width:54px'>"
+                f"<div style='font-size:8px;color:#94a3b8;font-weight:700'>SECTOR</div>"
+                f"<div style='font-size:13px;font-weight:800;"
+                f"color:{'#15803d' if _sw_r.get('c8_sector',0)>0 else '#dc2626' if _sw_r.get('c8_sector',0)<0 else '#1a2035'}'>"
+                f"{'+' if _sw_r.get('c8_sector',0)>0 else ''}{_sw_r.get('c8_sector',0)}</div>"
+                f"<div style='font-size:8px;color:#64748b'>{_sw_r.get('c8_sector_name','')}</div>"
                 f"</div>"
                 f"</div></div></div>",
                 unsafe_allow_html=True)
@@ -10857,6 +12996,8 @@ if _show_smaweekly:
                         'entry':       round(_entry, 2),
                         'qty':         _qty,
                         'stop_loss':   _sl,
+                        'atr':         round(_sw_r.get('atr', _sw_r.get('atr7', 0)), 2),
+                        'risk_per_share': round(_entry - _sl, 2),
                         't1':          _t1,
                         't2':          _t2,
                         't3':          _t3,
@@ -10906,31 +13047,52 @@ if _show_monthlyswing:
 
     # ── Local confident score function (dict-based) ────
     def calc_confident_score(r):
-        sc    = r.get('score', 0)
-        if   sc >= 130: c1 = 30
-        elif sc >= 120: c1 = 25
-        elif sc >= 110: c1 = 20
-        elif sc >= 100: c1 = 15
-        else:           c1 = 10
+        # C1 Technical (25pts) — calibrated to real raw score range
+        sc = r.get('score', 0)
+        if   sc >= 90: c1 = 25
+        elif sc >= 80: c1 = 22
+        elif sc >= 70: c1 = 18
+        elif sc >= 60: c1 = 14
+        elif sc >= 50: c1 = 10
+        else:          c1 = 6
+        # C2 PSAR (20pts)
         c2 = 20 if r.get('psar_bullish', False) else 0
-        hh = r.get('hh', False); hl = r.get('hl', False)
-        c3 = 15 if (hh and hl) else (8 if (hh or hl) else 0)
+        # C3 PA Structure (15pts)
+        _pa_struct = r.get('pa', {}).get('structure', '')
+        if   'Bullish' in _pa_struct: c3 = 15
+        elif 'Neutral' in _pa_struct: c3 = 8
+        elif 'Broken'  in _pa_struct: c3 = 0
+        else:
+            hh = r.get('hh', False); hl = r.get('hl', False)
+            c3 = 15 if (hh and hl) else (8 if (hh or hl) else 0)
+        # C4 Entry Badge (15pts)
         badge = r.get('entry_badge', 'ACCEPTABLE')
         c4 = 15 if badge == 'ENTER NOW' else (8 if badge == 'ACCEPTABLE' else 0)
+        # C5 R:R (10pts)
         rr2 = r.get('rr_t2', r.get('rr2', 0))
         try: rr2 = float(rr2)
         except: rr2 = 0
         c5 = 10 if rr2 >= 3.0 else (8 if rr2 >= 2.0 else (5 if rr2 >= 1.5 else 0))
+        # C6 Liquidity (5pts)
         liq = r.get('liq_grade', '')
         c6 = 5 if liq == 'EXCELLENT' else (3 if liq == 'HIGH' else (1 if liq == 'MEDIUM' else 0))
-        total = c1 + c2 + c3 + c4 + c5 + c6
-        if   total >= 80: label='🔥 CONFIDENT BUY'; clr='#15803d'; bg='#f0fdf4'; bdr='#86efac'
-        elif total >= 60: label='✅ GOOD SETUP';    clr='#1d4ed8'; bg='#eff6ff'; bdr='#93c5fd'
-        elif total >= 40: label='⚠️ WEAK SETUP';    clr='#d97706'; bg='#fffbeb'; bdr='#fcd34d'
-        else:             label='❌ SKIP';           clr='#dc2626'; bg='#fef2f2'; bdr='#fca5a5'
+        # C7 F&O Expiry (±15pts)
+        c7 = r.get('fno_penalty', 0)
+        # C8 Sector Ranking (±10pts) — unified function
+        _sym_r = r.get('symbol', r.get('sym', ''))
+        _sec_r, _sec_rank_r, _sec_rs_r, _sec_bull_r, _, c8, _, _ = \
+            get_sector_score_for_stock(_sym_r, formula='monthly')
+        total = c1 + c2 + c3 + c4 + c5 + c6 + c7 + c8
+        if   total >= 130: label='🔥 CONFIDENT BUY'; clr='#15803d'; bg='#f0fdf4'; bdr='#86efac'
+        elif total >= 100: label='✅ STRONG SETUP';  clr='#0369a1'; bg='#f0f9ff'; bdr='#7dd3fc'
+        elif total >= 75:  label='👍 GOOD SETUP';    clr='#1d4ed8'; bg='#eff6ff'; bdr='#93c5fd'
+        elif total >= 55:  label='⚠️ WEAK SETUP';    clr='#d97706'; bg='#fffbeb'; bdr='#fcd34d'
+        else:              label='❌ SKIP';           clr='#dc2626'; bg='#fef2f2'; bdr='#fca5a5'
         return {'confident_score':total,'confident_label':label,'confident_clr':clr,
                 'confident_bg':bg,'confident_bdr':bdr,
-                'c1_tech':c1,'c2_psar':c2,'c3_struct':c3,'c4_badge':c4,'c5_rr':c5,'c6_liq':c6}
+                'c1_tech':c1,'c2_psar':c2,'c3_struct':c3,'c4_badge':c4,
+                'c5_rr':c5,'c6_liq':c6,'c7_fno':c7,'c8_sector':c8,
+                'c8_sector_name':_sec_r,'c8_sector_rank':_sec_rank_r}
 
     # ── Data source badge ──────────────────────────────
     _ms_kite = get_kite_client() is not None
@@ -11058,6 +13220,40 @@ if _show_monthlyswing:
         step=5, key="ms_min_score",
         help="Higher = fewer but stronger signals")
 
+    # ── Strict Entry Mode ──────────────────────────────
+    _ms_strict = st.checkbox(
+        "🛡️ Strict Entry Mode",
+        value=True,
+        key="ms_strict_mode",
+        help=(
+            "When ON — only shows stocks where:\n"
+            "✅ PSAR is BULLISH (price above PSAR)\n"
+            "✅ Candle = Hammer OR Bullish Engulfing\n"
+            "✅ Confident Score ≥ 70\n\n"
+            "Fewer signals but much higher quality\n"
+            "Stocks that hold even when Nifty dips\n\n"
+            "When OFF — shows all signals including\n"
+            "bearish PSAR and mild candles"
+        ))
+    if _ms_strict:
+        st.markdown(
+            "<div style='background:#f0fdf4;border:1.5px solid #86efac;"
+            "border-radius:8px;padding:8px 14px;font-size:11px;"
+            "color:#15803d;margin-bottom:8px'>"
+            "🛡️ <b>Strict Mode ON</b> — Only Hammer/Engulfing candles "
+            "with Bullish PSAR shown · Fewer stocks · Higher win rate"
+            "</div>",
+            unsafe_allow_html=True)
+    else:
+        st.markdown(
+            "<div style='background:#fffbeb;border:1.5px solid #fde68a;"
+            "border-radius:8px;padding:8px 14px;font-size:11px;"
+            "color:#d97706;margin-bottom:8px'>"
+            "⚠️ <b>Strict Mode OFF</b> — All signals shown including "
+            "weak candles and bearish PSAR · More stocks · Lower quality"
+            "</div>",
+            unsafe_allow_html=True)
+
     # Volatility filter
     _ms_vol_col1, _ms_vol_col2 = st.columns(2)
     with _ms_vol_col1:
@@ -11105,6 +13301,8 @@ if _show_monthlyswing:
         _nifty_sma20   = None
         _nifty_sma50   = None
         _nifty_closes  = {}   # {weeks_ago: close}
+        _nifty_df_weekly = None  # for beta calculation
+        _ms_nifty_swing  = {'state': 'UNKNOWN'}  # swing state
         try:
             _nt = yf.Ticker('^NSEI')
             _nf = _nt.history(period='2y', interval='1wk', auto_adjust=True, actions=False)
@@ -11115,10 +13313,32 @@ if _show_monthlyswing:
             _nifty_sma20 = float(_nf['SMA20'].iloc[-1])
             _nifty_sma50 = float(_nf['SMA50'].iloc[-1])
             _nifty_bullish = _nifty_sma20 > _nifty_sma50
+            _nifty_df_weekly = _nf.copy()  # keep for beta calc
             _nifty_closes  = {
                 0: float(_nf['Close'].iloc[-1]),
                 4: float(_nf['Close'].iloc[-4]) if len(_nf)>=4 else float(_nf['Close'].iloc[-1]),
             }
+            # Build swing state from fetched data
+            _nf_close = float(_nf['Close'].iloc[-1])
+            _nf_sma20 = float(_nf['SMA20'].iloc[-1])
+            _nf_sma50 = float(_nf['SMA50'].iloc[-1])
+            _nf_slope = 0.0
+            if len(_nf) >= 6:
+                _nf_prev = float(_nf['SMA20'].iloc[-6])
+                _nf_slope = (_nf_sma20 - _nf_prev) / _nf_prev * 100 if _nf_prev > 0 else 0
+            if   _nf_close > _nf_sma20 > _nf_sma50 and _nf_slope > 0:
+                _ms_nifty_swing['state'] = 'BULLISH'
+            elif _nf_close > _nf_sma20:
+                _ms_nifty_swing['state'] = 'CAUTION'
+            elif _nf_close > _nf_sma50:
+                _ms_nifty_swing['state'] = 'CAUTION'
+            else:
+                _ms_nifty_swing['state'] = 'BEARISH'
+            _ms_nifty_swing['close'] = round(_nf_close, 2)
+            _ms_nifty_swing['sma20'] = round(_nf_sma20, 2)
+            _ms_nifty_swing['sma50'] = round(_nf_sma50, 2)
+            # Cache for dashboard
+            st.session_state['nifty_swing_weekly'] = _ms_nifty_swing
         except Exception:
             _nifty_bullish = True  # assume bullish if fetch fails
 
@@ -11134,61 +13354,48 @@ if _show_monthlyswing:
                 f"⚠️ Nifty Weekly is BEARISH — SMA20 ₹{_nifty_sma20:,.0f} < SMA50 ₹{_nifty_sma50:,.0f}  "
                 f"Only stocks with strong RS vs Nifty will appear. Use smaller position size.")
 
-        # ── Sector ETF map ────────────────────────────────
-        SECTOR_ETF = {
-            'BANK':    '^NSEBANK',   'FINANCE':  '^NSEBANK',
-            'IT':      '^CNXIT',      'TECH':     '^CNXIT',
-            'AUTO':    '^CNXAUTO',   'PHARMA':   '^CNXPHARMA',
-            'FMCG':    '^CNXFMCG',   'METAL':    '^CNXMETAL',
-            'ENERGY':  '^CNXENERGY', 'REALTY':   '^CNXREALTY',
-            'INFRA':   '^CNXINFRA',  'MEDIA':    '^CNXMEDIA',
-            'HEALTHCARE':'^CNXPHARMA',
-        }
-        # Fetch sector weekly SMA status — 6mo for speed, neutral on error
-        _sector_status = {}
-        for _sec_key, _sec_sym in SECTOR_ETF.items():
-            try:
-                _sf = yf.Ticker(_sec_sym).history(
-                    period='6mo', interval='1wk', auto_adjust=True, actions=False)
-                if _sf is None or len(_sf) < 15:
-                    _sector_status[_sec_key] = (True, 0); continue
-                _sf.columns = [c.split(' ')[0] if ' ' in str(c) else c for c in _sf.columns]
-                _sf = _sf[['Close']].dropna()
-                _sf['SMA20'] = _sf['Close'].rolling(min(20,len(_sf))).mean()
-                _s20v = float(_sf['SMA20'].iloc[-1])
-                _s50v = float(_sf['Close'].iloc[-min(50,len(_sf))])  # approx SMA50
-                _gap  = (_s20v-_s50v)/_s50v*100 if _s50v>0 else 0
-                _sector_status[_sec_key] = (_s20v>_s50v, round(_gap,2))
-            except Exception:
-                _sector_status[_sec_key] = (True, 0)
+        # ── Sector ranking — use UNIFIED function ─────────
+        # Same formula and data as SMA Weekly and Sector Leaders
+        # Consistent ranking across all 3 tabs
+        # Uses cached result (1hr) — no extra API calls
+        _ms_rankings        = get_unified_sector_rankings(formula='monthly')
+        _sector_status      = _ms_rankings['status_map']
+        _sector_rs          = _ms_rankings['rs_map']
+        _sector_rank_map    = _ms_rankings['rank_map']
+        _unique_sectors     = _ms_rankings['rs_map']
+
+        def _get_sector_rank(sym):
+            """Thin wrapper — uses single authoritative classify_stock_sector().
+            Returns (sector_name, rank, rs) for MS scanner."""
+            _sec = classify_stock_sector(sym)
+            if _sec == 'UNKNOWN':
+                return 'INFRA', 10, 0.0
+            # Map extended proxy sectors to ones in _sector_rank_map
+            _fallback = {
+                'PSU_BANK':'BANK','PVT_BANK':'BANK',
+                'HEALTHCARE':'PHARMA','TEXTILES':'INFRA',
+                'AGRI':'INFRA','LOGISTICS':'INFRA',
+                'DEFENCE':'INFRA','CONSUMPTION':'CONSUMER',
+            }
+            _sec_key = _fallback.get(_sec, _sec)
+            _rank = _sector_rank_map.get(_sec_key, 10)
+            _rs   = _sector_rs.get(_sec_key, 0.0)
+            return _sec_key, _rank, _rs
 
         def _get_sector_status(sym):
-            """Map stock symbol to sector and return (bullish, gap%)"""
-            sym = sym.upper()
-            # Bank/Finance
-            if any(x in sym for x in ['BANK','HDFC','ICICI','AXIS','KOTAK','SBI','PNB','BOB','INDUSIND','FEDERAL','BANDHAN']):
-                return _sector_status.get('BANK',(True,0))
-            # IT
-            if any(x in sym for x in ['TCS','INFY','WIPRO','HCL','TECH','COFORGE','MPHASIS','LTIM','PERSISTENT']):
-                return _sector_status.get('IT',(True,0))
-            # Auto
-            if any(x in sym for x in ['MARUTI','TATAMOTOR','M&M','BAJAJ','HERO','EICHER','CRAFTSMAN','BOSCH','MINDA','SONA']):
-                return _sector_status.get('AUTO',(True,0))
-            # Pharma
-            if any(x in sym for x in ['SUNPHARMA','DRREDDY','CIPLA','DIVISLAB','AUROPHARMA','ALKEM','LUPIN','EMCURE']):
-                return _sector_status.get('PHARMA',(True,0))
-            # FMCG
-            if any(x in sym for x in ['HINDUNILVR','ITC','NESTL','DABUR','MARICO','COLGATE','GODREJCP']):
-                return _sector_status.get('FMCG',(True,0))
-            # Metal
-            if any(x in sym for x in ['TATASTEEL','JSWSTEEL','HINDALCO','VEDL','SAIL','NMDC']):
-                return _sector_status.get('METAL',(True,0))
-            # Energy
-            if any(x in sym for x in ['RELIANCE','ONGC','BPCL','IOC','NTPC','POWERGRID','NTPCGREEN']):
-                return _sector_status.get('ENERGY',(True,0))
-            # Default → assume neutral
-            return (True, 0)
-
+            """Thin wrapper — uses single authoritative classify_stock_sector().
+            Returns (bullish, gap%) for MS scanner."""
+            _sec = classify_stock_sector(sym)
+            if _sec == 'UNKNOWN':
+                return (True, 0.0)
+            _fallback = {
+                'PSU_BANK':'BANK','PVT_BANK':'BANK',
+                'HEALTHCARE':'PHARMA','TEXTILES':'INFRA',
+                'AGRI':'INFRA','LOGISTICS':'INFRA',
+                'DEFENCE':'INFRA','CONSUMPTION':'CONSUMER',
+            }
+            _sec_key = _fallback.get(_sec, _sec)
+            return _sector_status.get(_sec_key, (True, 0.0))
         # Results season months — Q4: Apr-May, Q1: Jul-Aug, Q2: Oct-Nov, Q3: Jan-Feb
         _now_month = ist_now().month
         _results_season = _now_month in [1,2,4,5,7,8,10,11]
@@ -11393,10 +13600,73 @@ if _show_monthlyswing:
                             pb_found=True; pb_age=i; break
                 has_pb = pb_found and close>=sma20*1.002 and pct_above20<=5
 
+                # ── Volume Dry-Up on Pullback ─────────────
+                # Healthy pullback = falling on LOW volume
+                # = sellers exhausted, not distributing
+                # Dangerous pullback = falling on HIGH volume
+                # = institutions dumping = falling knife
+                _pb_vol_score = 0
+                _pb_vol_label = ''
+                _pb_vol_clr   = '#64748b'
+                if has_pb and pb_age > 0:
+                    try:
+                        # Volume during pullback weeks
+                        _pb_vol_avg = float(df['Volume'].iloc[-10:-3].mean())
+                        _pb_vol_now = float(df['Volume'].iloc[-pb_age])
+                        _pb_vol_ratio = _pb_vol_now / _pb_vol_avg if _pb_vol_avg > 0 else 1.0
+                        _pb_vol_ratio = round(_pb_vol_ratio, 2)
+
+                        if   _pb_vol_ratio < 0.5:
+                            # Very low volume = perfect dry-up ✅✅
+                            _pb_vol_score = +15
+                            _pb_vol_label = '💧 Vol dry-up (perfect)'
+                            _pb_vol_clr   = '#15803d'
+                        elif _pb_vol_ratio < 0.7:
+                            # Low volume = healthy pullback ✅
+                            _pb_vol_score = +10
+                            _pb_vol_label = '💧 Vol dry-up (healthy)'
+                            _pb_vol_clr   = '#16a34a'
+                        elif _pb_vol_ratio < 1.0:
+                            # Slightly below average = ok
+                            _pb_vol_score = +5
+                            _pb_vol_label = '✅ Vol below avg'
+                            _pb_vol_clr   = '#d97706'
+                        elif _pb_vol_ratio < 1.5:
+                            # Average volume = neutral
+                            _pb_vol_score = 0
+                            _pb_vol_label = '⚠️ Vol normal'
+                            _pb_vol_clr   = '#d97706'
+                        elif _pb_vol_ratio < 2.0:
+                            # High volume pullback = warning
+                            _pb_vol_score = -10
+                            _pb_vol_label = '🔴 Vol high on pullback'
+                            _pb_vol_clr   = '#dc2626'
+                        else:
+                            # Very high volume = dangerous
+                            _pb_vol_score = -20
+                            _pb_vol_label = '❌ Distribution detected'
+                            _pb_vol_clr   = '#991b1b'
+                    except Exception:
+                        _pb_vol_ratio = 1.0
+                        _pb_vol_score = 0
+                        _pb_vol_label = ''
+                else:
+                    _pb_vol_ratio = 1.0
+
                 high_13w  = float(df['High'].iloc[-14:-1].max()) if len(df)>=14 else 0
                 is_brkout = (close>high_13w and vol_ratio>=1.5) if high_13w>0 else False
 
-                if not has_cross and not has_pb and not is_brkout:
+                # ── 52-Week High Breakout ─────────────────
+                # Annual high breakout = very strong signal
+                # Institutions notice and chase these moves
+                high_52w  = float(df['High'].iloc[-53:-1].max()) if len(df)>=53 else high_13w
+                is_52w_brkout = (
+                    close > high_52w and          # price above 52W high
+                    vol_ratio >= 1.5 and           # volume confirming
+                    close > sma20 > sma50          # trend intact
+                ) if high_52w > 0 else False
+
+                if not has_cross and not has_pb and not is_brkout and not is_52w_brkout:
                     continue
 
                 if rsi>70:     continue
@@ -11409,9 +13679,16 @@ if _show_monthlyswing:
                 cb=(25 if cross_age==0 else 18 if cross_age==1 else 12) if has_cross else 0
                 pb=(22 if pb_age==1 else 16) if has_pb else 0
                 ib=20 if (is_brkout and vol_ratio>=1.5) else (12 if is_brkout else 0)
-                sc=len([x for x in [has_cross,has_pb,is_brkout] if x])
-                if sc>=2:   score+=min(30,max(cb,pb,ib)+5)
-                elif sc==1: score+=max(cb,pb,ib)
+                # 52W breakout gets highest score — strongest signal
+                i52=(30 if (is_52w_brkout and vol_ratio>=2.0) else
+                     25 if is_52w_brkout else 0)
+                sc=len([x for x in [has_cross,has_pb,is_brkout,is_52w_brkout] if x])
+                if sc>=2:   score+=min(30,max(cb,pb,ib,i52)+5)
+                elif sc==1: score+=max(cb,pb,ib,i52)
+
+                # Volume dry-up on pullback (max +15, min -20)
+                # Only applies when pullback signal triggered
+                score += _pb_vol_score
 
                 # Price vs SMA20 (max 20)
                 score+=(20 if pct_above20<=1 else 15 if pct_above20<=2 else
@@ -11477,9 +13754,21 @@ if _show_monthlyswing:
 
                 # NEW: Sector momentum (max 8)
                 _sec_bull, _sec_gap = _get_sector_status(sym_clean)
-                if   _sec_bull and _sec_gap>1: score+=8   # sector strong
-                elif _sec_bull:                score+=4   # sector mild bull
-                else:                          score-=8   # sector bearish
+                _sec_name, _sec_rank, _sec_rs_gap = _get_sector_rank(sym_clean)
+
+                # Sector bullish/bearish — context signal, small weight
+                if   _sec_bull and _sec_gap>1: score+=5   # sector strong
+                elif _sec_bull:                score+=2   # sector mild bull
+                else:                          score-=2   # sector bearish
+
+                # Sector RS Ranking — BONUS ONLY, minimal penalty
+                # Individual stock RS vs sector is the real differentiator
+                # Extraordinary stocks exist even in weak sectors
+                if   _sec_rank <= 2: score += 10  # top sector ✅✅
+                elif _sec_rank <= 4: score += 7   # strong sector ✅
+                elif _sec_rank <= 6: score += 3   # above average
+                elif _sec_rank <= 9: score += 0   # neutral
+                else:                score -= 3   # bottom sector ⚠️
 
                 # NEW: 52-week high proximity (max 10)
                 high_52w     = float(df['High'].tail(52).max()) if len(df)>=52 else float(df['High'].max())
@@ -11516,7 +13805,7 @@ if _show_monthlyswing:
                 elif _retrace_pct < 78.6:   score -= 5   # 61-78% — deep, still ok ⚠️
                 # >78.6% already rejected as hard gate above
 
-                if score<min_score:
+                if score < 40:  # low pre-filter
                     continue
 
                 # ══════════════════════════════════════════
@@ -11605,7 +13894,42 @@ if _show_monthlyswing:
                     score -= 8  # reduce score, don't reject
                     # Still show on card as warning
 
-                # ── Volatility score adjustment ───────────
+                # ── Beta score (dynamic — based on Nifty state) ──
+                # Bearish Nifty: high beta penalised, low beta rewarded
+                # Bullish Nifty: high beta rewarded, low beta neutral
+                score += _beta_score
+
+                # ── Volatility Squeeze Detection ──────────────
+                # Weekly candles — more reliable squeeze detection
+                # Squeeze fired on weekly = strongest signal
+                _ms_sq = detect_volatility_squeeze(df)
+
+                # ── ADX — Trend Strength ───────────────────────
+                # Weekly ADX — better for 3-5 week hold
+                # ADX > 25 on weekly = very strong trend
+                _ms_adx, _ms_pdi, _ms_mdi = calc_adx(df, period=14)
+                _ms_adx_score, _ms_adx_lbl, _ms_adx_clr = \
+                    get_adx_score(_ms_adx, _ms_pdi, _ms_mdi)
+
+                # ── Filter 1: Candle close position ───────
+                # Reject if price closed in bottom 25% of week
+                _ms_wp, _ms_wp_score, _ms_wp_label, _ms_wp_reject = \
+                    get_candle_close_position(df, bars=1)
+                if _ms_wp_reject:
+                    continue
+                score += _ms_wp_score
+
+                # ── Filter 2: Prior candle body comparison ─
+                _ms_cb_ratio, _ms_cb_score, _ms_cb_label = \
+                    get_candle_body_momentum(df)
+                score += _ms_cb_score
+
+                # ── Volatility Squeeze score ───────────────
+                score += _ms_sq.get('score', 0)
+
+                # ── ADX score ──────────────────────────────
+                score += _ms_adx_score
+
                 score += _ms_vol_score
 
                 if score < min_score:
@@ -11636,15 +13960,44 @@ if _show_monthlyswing:
                 risk_d= entry-sl
                 if risk_d<=0: continue
 
+                # ── Filter 3: Dynamic risk sizing ─────────
+                _ms_nifty_st = st.session_state.get('nifty_swing_weekly', {}).get('state','UNKNOWN')
+                try:
+                    _ms_pk = st.session_state.get('peak_capital', capital)
+                    _ms_cr = st.session_state.get('current_capital', capital)
+                    _ms_dd_pct = max(0.0, (_ms_pk-_ms_cr)/_ms_pk*100) if _ms_pk>0 else 0.0
+                except Exception:
+                    _ms_dd_pct = 0.0
+                _ms_adj_risk, _ms_risk_lbl, _ms_risk_clr, _ms_risk_reason = \
+                    get_dynamic_risk_pct(risk_pct, _ms_nifty_st, _ms_dd_pct)
+
                 t1 = round(entry+1.0*atr7,2)
                 t2 = round(entry+2.0*atr7,2)
                 t3 = round(entry+3.0*atr7,2)
-                qty= max(1,int((capital*risk_pct/100)/risk_d))
+                qty= max(1,int((capital*_ms_adj_risk/100)/risk_d))
                 inv= round(entry*qty,2)
                 rr1= round((t1-entry)/risk_d,1)
                 rr2= round((t2-entry)/risk_d,1)
                 rr3= round((t3-entry)/risk_d,1)
                 mchg=round((close-float(df['Close'].iloc[-5]))/float(df['Close'].iloc[-5])*100,2) if len(df)>=5 else 0
+
+                # ── Beta calculation ──────────────────────
+                # Dynamic score based on Nifty swing state
+                _beta_val   = 1.0
+                _beta_score = 0
+                _beta_label = '➡️ Neutral'
+                _beta_clr   = '#64748b'
+                _beta_grade = 'NEUTRAL'
+                _beta_bg    = '#f8fafc'
+                _beta_bdr   = '#e2e8f0'
+                _beta_ico   = '➡️'
+                try:
+                    _beta_val = calc_stock_beta(df, _nifty_df_weekly, periods=52)
+                    _beta_score, _beta_label, _beta_clr = get_beta_score(
+                        _beta_val, _ms_nifty_swing)
+                    _beta_grade, _beta_clr, _beta_bg, _beta_bdr, _beta_ico = get_beta_grade(_beta_val)
+                except Exception:
+                    pass
 
                 # ── PSAR (weekly, step=0.01, max=0.10) ───
                 # Used as trailing SL after T1 hit
@@ -11672,8 +14025,25 @@ if _show_monthlyswing:
 
                 # Add PA score to total
                 score += _pa['pa_total_score']
-                if score < min_score:
+                if score < 40:  # low pre-filter
                     continue
+
+                # ── Strict Entry Mode Filter ──────────────
+                # Runs AFTER PA so candle_pattern is available
+                # Monthly Swing: stricter than SMA Weekly
+                # Requires Hammer/Engulfing/Strong Bull
+                # because 3-5 week hold needs strong conviction
+                _ms_strict_on = st.session_state.get('ms_strict_mode', True)
+                if _ms_strict_on:
+                    # Gate 1 — PSAR must be bullish
+                    if not _psar_bullish:
+                        continue  # PSAR bearish → skip
+
+                    # Gate 2 — Strong candle required
+                    _ms_candle_pat  = _pa.get('candle_pattern', '')
+                    _strong_candles = ('Hammer', 'Bullish Engulfing', 'Strong Bull')
+                    if not any(c in _ms_candle_pat for c in _strong_candles):
+                        continue  # weak candle → skip
 
                 # Liquidity
                 _dv=vol_ma*close
@@ -11692,7 +14062,8 @@ if _show_monthlyswing:
                 sigs=[]
                 if has_cross:   sigs.append(f"🔀 Weekly cross {cross_age}wk ago")
                 if has_pb:      sigs.append(f"📉 Pullback {pb_age}wk ago")
-                if is_brkout:   sigs.append(f"🚀 13wk breakout")
+                if is_brkout:     sigs.append(f"🚀 13wk breakout")
+                if is_52w_brkout: sigs.append(f"🏆 52W High Breakout")
                 signal_label=' + '.join(sigs)
 
                 results.append({
@@ -11714,6 +14085,11 @@ if _show_monthlyswing:
                     'has_cross':    has_cross,
                     'has_pb':       has_pb,
                     'is_breakout':  is_brkout,
+                    'is_52w_brkout':  is_52w_brkout,
+                    'pb_vol_ratio':   round(_pb_vol_ratio, 2),
+                    'pb_vol_score':   _pb_vol_score,
+                    'pb_vol_label':   _pb_vol_label,
+                    'pb_vol_clr':     _pb_vol_clr,
                     'cross_age':    cross_age if has_cross else 99,
                     'pb_age':       pb_age,
                     'hh': hh, 'hl': hl,
@@ -11763,11 +14139,51 @@ if _show_monthlyswing:
                     'macd_above':   macd_above_sig,
                     'sec_bull':     _sec_bull,
                     'sec_gap':      _sec_gap,
+                    'sec_name':     _sec_name,
+                    'sec_rank':     _sec_rank,
+                    'sec_rs_gap':   _sec_rs_gap,
                     'pct_from_52w': round(pct_from_52w,1),
                     'inside_week':  inside_week,
                     'week_range':   round(week_range,1),
                     'results_season': _results_season,
                     'nifty_bullish': _nifty_bullish,
+                    'beta':          round(_beta_val, 2),
+                    'beta_score':    _beta_score,
+                    'beta_label':    _beta_label,
+                    'beta_grade':    _beta_grade,
+                    'beta_clr':      _beta_clr,
+                    'beta_bg':       _beta_bg,
+                    'beta_bdr':      _beta_bdr,
+                    'beta_ico':      _beta_ico,
+                    'nifty_swing_state': _ms_nifty_swing.get('state', 'UNKNOWN'),
+                    # Filter 1 — candle close position
+                    'week_pos':      _ms_wp,
+                    'wp_score':      _ms_wp_score,
+                    'wp_label':      _ms_wp_label,
+                    # Filter 2 — candle body momentum
+                    'cb_ratio':      _ms_cb_ratio,
+                    'cb_score':      _ms_cb_score,
+                    'cb_label':      _ms_cb_label,
+                    # Volatility squeeze
+                    'squeeze':       _ms_sq,
+                    'squeeze_score': _ms_sq.get('score', 0),
+                    'squeeze_fired': _ms_sq.get('squeeze_fired', False),
+                    'squeeze_on':    _ms_sq.get('squeeze_on', False),
+                    'squeeze_label': _ms_sq.get('label', ''),
+                    'squeeze_weeks': _ms_sq.get('squeeze_weeks', 0),
+                    # ADX
+                    'adx':           _ms_adx,
+                    'adx_pdi':       _ms_pdi,
+                    'adx_mdi':       _ms_mdi,
+                    'adx_score':     _ms_adx_score,
+                    'adx_label':     _ms_adx_lbl,
+                    'adx_clr':       _ms_adx_clr,
+                    # Filter 3 — dynamic risk sizing
+                    'adj_risk_pct':  _ms_adj_risk,
+                    'risk_label':    _ms_risk_lbl,
+                    'risk_clr':      _ms_risk_clr,
+                    'risk_reason':   _ms_risk_reason,
+                    **get_fno_info(sym_clean),
                 })
                 # Calculate confident score
                 _ms_cs = calc_confident_score(results[-1])
@@ -11826,6 +14242,77 @@ if _show_monthlyswing:
     _ms_results  = st.session_state.get('ms_results', [])
     _ms_scantime = st.session_state.get('ms_scan_time', '')
 
+    # ── Nifty State Banner for Monthly Swing ──────────────
+    _ms_nifty_disp = st.session_state.get('nifty_swing_weekly', {}).get('state', 'UNKNOWN')
+
+    if _ms_nifty_disp == 'BEARISH':
+        st.markdown(
+            "<div style='background:#1f0c0c;border:2px solid #dc2626;"
+            "border-radius:12px;padding:16px 20px;margin-bottom:16px'>"
+            "<div style='font-size:15px;font-weight:800;color:#fca5a5'>"
+            "⛔ NIFTY BEARISH — New Monthly Swing Entries NOT Recommended</div>"
+            "<div style='font-size:11px;color:#fecaca;margin-top:8px;line-height:2'>"
+            "📉 <b>Why:</b> 3-5 week hold in BEARISH market = high risk of further downside &nbsp;·&nbsp; "
+            "Even strong stocks fall with a falling Nifty over weeks<br>"
+            "✅ <b>What to do:</b> Use SMA Weekly tab instead (3-7 day holds) &nbsp;·&nbsp; "
+            "Wait for Nifty to return to CAUTION or BULLISH state<br>"
+            "⚠️ <b>If you scan:</b> Results shown for reference only — "
+            "enter only if you have very strong conviction + tight SL"
+            "</div></div>",
+            unsafe_allow_html=True)
+
+    elif _ms_nifty_disp == 'CAUTION':
+        st.markdown(
+            "<div style='background:#1c150a;border:1.5px solid #d97706;"
+            "border-radius:10px;padding:10px 16px;margin-bottom:12px'>"
+            "<div style='font-size:12px;font-weight:800;color:#fcd34d'>"
+            "⚠️ NIFTY CAUTION — Monthly Swing in Selective Mode</div>"
+            "<div style='font-size:11px;color:#fde68a;margin-top:4px'>"
+            "Prefer SMA Weekly for shorter holds · "
+            "Monthly Swing entries: only ✅ STRONG SETUP (≥100) or higher · "
+            "Reduced position sizes active"
+            "</div></div>",
+            unsafe_allow_html=True)
+
+    # ── Expiry Zone Banner ─────────────────────────────
+    _ms_dte  = days_to_expiry()
+    _ms_zone = get_expiry_zone(_ms_dte)
+    _ms_exp  = get_monthly_expiry()
+    _ms_exp_str = _ms_exp.strftime('%d %b %Y')
+    if   _ms_zone == 'FRESH':
+        _mb_bg='#f0fdf4'; _mb_bdr='#86efac'; _mb_clr='#15803d'
+        _mb_ico='🟢'; _mb_title='Post-Expiry — BEST Entry Window!'
+        _mb_msg=(f'New F&O cycle · Fresh positions building · '
+                 f'Enter any stock freely · Next expiry {_ms_exp_str}')
+    elif _ms_zone == 'DANGER':
+        _mb_bg='#fef2f2'; _mb_bdr='#fca5a5'; _mb_clr='#dc2626'
+        _mb_ico='🔴'; _mb_title=f'Expiry Week — {_ms_dte} days to {_ms_exp_str}'
+        _mb_msg=('F&O stocks price-pinned this week · '
+                 'Non-F&O stocks shown first · '
+                 'F&O score -15 pts · Wait for post-expiry if possible')
+    elif _ms_zone == 'CAUTION':
+        _mb_bg='#fffbeb'; _mb_bdr='#fde68a'; _mb_clr='#d97706'
+        _mb_ico='⚠️'; _mb_title=f'Second Half — {_ms_dte} days to {_ms_exp_str}'
+        _mb_msg=('Approaching expiry · F&O stocks may slow · '
+                 'Non-F&O stocks preferred · F&O score -8 pts')
+    else:
+        _mb_bg='#f0fdf4'; _mb_bdr='#bbf7d0'; _mb_clr='#15803d'
+        _mb_ico='✅'; _mb_title=f'Safe Zone — {_ms_dte} days to {_ms_exp_str}'
+        _mb_msg='First half of month · Enter freely · No expiry pinning risk'
+
+    st.markdown(
+        f"<div style='background:{_mb_bg};border:1.5px solid {_mb_bdr};"
+        f"border-radius:10px;padding:10px 16px;margin-bottom:12px;"
+        f"display:flex;align-items:center;gap:12px'>"
+        f"<div style='font-size:22px'>{_mb_ico}</div>"
+        f"<div>"
+        f"<div style='font-size:12px;font-weight:800;color:{_mb_clr}'>"
+        f"F&O EXPIRY — {_mb_title}</div>"
+        f"<div style='font-size:11px;color:{_mb_clr};opacity:0.85;margin-top:2px'>"
+        f"{_mb_msg}</div>"
+        f"</div></div>",
+        unsafe_allow_html=True)
+
     if not _ms_results:
         st.markdown("""
         <div style='background:#1a2035;border-radius:16px;padding:36px;
@@ -11842,17 +14329,20 @@ if _show_monthlyswing:
         </div>""", unsafe_allow_html=True)
     else:
         # Filter buttons
-        _n_all = len(_ms_results)
+        _n_all   = len(_ms_results)
         _n_cross = len([r for r in _ms_results if r.get('has_cross')])
         _n_pb    = len([r for r in _ms_results if r.get('has_pb')])
         _n_brkout= len([r for r in _ms_results if r.get('is_breakout')])
+        _n_52w   = len([r for r in _ms_results if r.get('is_52w_brkout')])
 
         _ms_filter = st.radio(
             "Filter",
             [f"📊 All ({_n_all})",
              f"🔀 Weekly Cross ({_n_cross})",
              f"📉 Weekly Pullback ({_n_pb})",
-             f"🚀 13-Week Breakout ({_n_brkout})"],
+             f"🚀 13-Week Breakout ({_n_brkout})",
+             f"🏆 52W High Breakout ({_n_52w})",
+             f"🔥 Squeeze ({sum(1 for r in _ms_results if r.get('squeeze_fired') or r.get('squeeze_on'))})"],
             horizontal=True, key="ms_filter")
 
         if 'Weekly Cross' in _ms_filter:
@@ -11861,6 +14351,15 @@ if _show_monthlyswing:
             _ms_show = [r for r in _ms_results if r.get('has_pb')]
         elif '13-Week Breakout' in _ms_filter:
             _ms_show = [r for r in _ms_results if r.get('is_breakout')]
+        elif '52W High Breakout' in _ms_filter:
+            _ms_show = [r for r in _ms_results if r.get('is_52w_brkout')]
+        elif 'Squeeze' in _ms_filter:
+            _ms_show = [r for r in _ms_results
+                        if r.get('squeeze_fired') or r.get('squeeze_on')]
+            _ms_show = sorted(_ms_show,
+                               key=lambda x: (x.get('squeeze_fired',False),
+                                              x.get('squeeze_weeks',0)),
+                               reverse=True)
         else:
             _ms_show = _ms_results
 
@@ -12302,6 +14801,20 @@ if _show_monthlyswing:
             _ms_r_eb_badge  = _ms_r.get('entry_badge','ACCEPTABLE')
             _ms_r_eb_clr    = _ms_r.get('entry_clr','#d97706')
             _ms_r_eb_bg     = _ms_r.get('entry_bg','#fffbeb')
+            _ms_r_fno_badge = _ms_r.get('fno_badge','✅ Non-F&O')
+            _ms_r_fno_clr   = _ms_r.get('fno_clr','#64748b')
+            _ms_r_fno_bg    = _ms_r.get('fno_bg','#f8fafc')
+            _ms_r_fno_bdr   = _ms_r.get('fno_bdr','#e2e8f0')
+            _ms_r_fno_note  = _ms_r.get('fno_note','')
+            # Beta badge
+            _ms_beta        = _ms_r.get('beta', 1.0)
+            _ms_beta_grade  = _ms_r.get('beta_grade', 'NEUTRAL')
+            _ms_beta_clr    = _ms_r.get('beta_clr', '#64748b')
+            _ms_beta_bg     = _ms_r.get('beta_bg', '#f8fafc')
+            _ms_beta_bdr    = _ms_r.get('beta_bdr', '#e2e8f0')
+            _ms_beta_ico    = _ms_r.get('beta_ico', '➡️')
+            _ms_beta_score  = _ms_r.get('beta_score', 0)
+            _ms_beta_ss     = f'+{_ms_beta_score}' if _ms_beta_score > 0 else str(_ms_beta_score)
 
             # ── Confident Score ───────────────────────
             _ms_conf     = _ms_r.get('confident_score', 0)
@@ -12315,6 +14828,7 @@ if _show_monthlyswing:
             _ms_c4       = _ms_r.get('c4_badge',  0)
             _ms_c5       = _ms_r.get('c5_rr',     0)
             _ms_c6       = _ms_r.get('c6_liq',    0)
+            _ms_c7       = _ms_r.get('c7_fno',    0)
 
             _hdr = (
                 f"<div style='background:#ffffff;border:2px solid {_ms_conf_bdr};"
@@ -12346,8 +14860,20 @@ if _show_monthlyswing:
                 f"font-weight:700;border-radius:4px;padding:2px 8px;"
                 f"border:1px solid {_ms_r_eb_clr}44'>"
                 f"{_ms_r_eb_ico} {_ms_r_eb_badge}</span>"
+                f"<span style='background:{_ms_r_fno_bg};color:{_ms_r_fno_clr};font-size:10px;"
+                f"font-weight:700;border-radius:4px;padding:2px 8px;"
+                f"border:1px solid {_ms_r_fno_bdr}'>"
+                f"{_ms_r_fno_badge}</span>"
+                f"<span style='background:{_ms_beta_bg};color:{_ms_beta_clr};"
+                f"font-size:10px;font-weight:700;border-radius:4px;padding:2px 8px;"
+                f"border:1px solid {_ms_beta_bdr}'>"
+                f"{_ms_beta_ico} Beta {_ms_beta:.2f} {_ms_beta_grade} ({_ms_beta_ss}pts)</span>"
                 "</div>"
-                f"<div style='font-size:12px;color:#64748b;margin-top:6px'>"
+                + (f"<div style='font-size:10px;color:{_ms_r_fno_clr};"
+                   f"margin-top:3px;padding:3px 8px;"
+                   f"background:{_ms_r_fno_bg};border-radius:4px'>"
+                   f"{_ms_r_fno_note}</div>" if _ms_r_fno_note else "")
+                + f"<div style='font-size:12px;color:#64748b;margin-top:6px'>"
                 f"<span style='color:#7c3aed;font-weight:700'>{_slab}</span>"
                 f" \u00b7 RSI {_rsi} \u00b7 Vol {_volx}\u00d7 \u00b7 Trend {_tw}wk \u00b7 "
                 f"<span style='color:{_mchg_clr}'>Month {_mchg:+.1f}%</span>"
@@ -12377,18 +14903,25 @@ if _show_monthlyswing:
             _hh_ico     = '✅' if _hh else '❌'
             _hl_ico     = '✅' if _hl else '❌'
             _sec_ico    = '✅' if _sec_b else '❌'
-            _inw_str    = '✅InsideWk' if _inw else f'{_wkrng:.1f}%rng'
+            _inw_str    = '✅ Inside Week' if _inw else f'Wk range: {_wkrng:.1f}%'
             _rs_sign    = '+' if _rs>=1 else ''
             _obv_str    = '↑Accum' if _obv>0 else '↓Distrib'
             _rseas_html = '<span><b style="color:#d97706">⚠️Results</b></span>' if _rseas else ''
             _eps_html   = f'<span><b>{_eps_str}</b></span>' if _eps_str else ''
             _ew_html    = (f'<span style="color:#dc2626"><b>⚠️ Results {_ed} — verify</b></span>') if _ew else ''
+            # Sector rank display
+            _ms_sec_rank = _ms_r.get('sec_rank', 5)
+            _ms_sec_name = _ms_r.get('sec_name', '')
+            _ms_sec_rs   = _ms_r.get('sec_rs_gap', 0.0)
+            _ms_sec_rs_s = f'+{_ms_sec_rs:.1f}%' if _ms_sec_rs >= 0 else f'{_ms_sec_rs:.1f}%'
+            if   _ms_sec_rank <= 2: _ms_sec_rank_clr='#15803d'; _ms_sec_rank_ico='🥇'
+            elif _ms_sec_rank <= 4: _ms_sec_rank_clr='#16a34a'; _ms_sec_rank_ico='🥈'
+            elif _ms_sec_rank <= 6: _ms_sec_rank_clr='#d97706'; _ms_sec_rank_ico='🥉'
+            else:                   _ms_sec_rank_clr='#dc2626'; _ms_sec_rank_ico='⬇️'
             st.markdown(
                 f"<div style='background:#f8fafc;border-radius:8px;padding:10px 14px;"
                 f"margin-bottom:10px;font-size:11px'>"
                 f"<div style='display:flex;gap:12px;flex-wrap:wrap;margin-bottom:5px'>"
-                f"<span>HH:{_hh_ico}</span>"
-                f"<span>HL:{_hl_ico}</span>"
                 f"<span>SMA20 slope:<b style='color:{_sl_clr2}'>{_sl_lbl} {_sl_str:+.2f}%</b></span>"
                 f"<span>vs SMA20:<b style='color:{_p20_clr}'>+{_p20:.1f}%</b></span>"
                 f"<span>vs SMA50:<b>+{_p50:.1f}%</b></span>"
@@ -12403,31 +14936,70 @@ if _show_monthlyswing:
                 f"<span>OBV:<b style='color:{_obv_clr}'>{_obv_str}</b></span>"
                 f"<span>MACD:<b style='color:{_macd_clr}'>{_macd_lbl}</b></span>"
                 f"<span>Sector:<b style='color:{_sec_clr}'>{_sec_ico}</b></span>"
+                f"<span style='color:{_ms_sec_rank_clr};font-weight:700'>"
+                f"{_ms_sec_rank_ico} Rank #{_ms_sec_rank} {_ms_sec_name} ({_ms_sec_rs_s} vs Nifty)</span>"
                 f"<span>52W:<b style='color:{_52w_clr}'>{_52w:.1f}%↓</b></span>"
-                f"<span>{_inw_str}</span>"
+                f"<span><b>{'✅ Inside Week' if _inw else f'Wk range: {_wkrng:.1f}%'}</b></span>"
                 f"{_rseas_html}"
-                "</div>"
+                + (f"<span style='color:{_ms_r.get('pb_vol_clr','#64748b')};font-weight:700'>"
+                   f"{_ms_r.get('pb_vol_label','')} ({_ms_r.get('pb_vol_ratio',1.0):.2f}×)</span>"
+                   if _ms_r.get('pb_vol_label') else "")
+                + (f"<span style='color:{'#15803d' if _ms_r.get('wp_score',0)>0 else '#dc2626'};font-weight:700'>"
+                   f"📍 {_ms_r.get('wp_label','')} ({_ms_r.get('week_pos',0.5):.0%})</span>")
+                + (f"<span style='color:{'#15803d' if _ms_r.get('cb_score',0)>0 else '#d97706' if _ms_r.get('cb_score',0)==0 else '#dc2626'};font-weight:700'>"
+                   f"📊 {_ms_r.get('cb_label','')}</span>")
+                + (f"<span style='font-weight:800;"
+                   f"color:{_ms_r.get('squeeze',{}).get('clr','#64748b')};"
+                   f"background:{'#f0fdf4' if _ms_r.get('squeeze_fired') else '#fffbeb' if _ms_r.get('squeeze_on') else 'transparent'};"
+                   f"padding:1px 6px;border-radius:4px'>"
+                   f"{_ms_r.get('squeeze',{}).get('ico','➡️')} "
+                   f"{_ms_r.get('squeeze_label','')}"
+                   + (f" · BB {_ms_r.get('squeeze',{}).get('bb_width_change',0):+.0f}%"
+                      if _ms_r.get('squeeze_fired') else "")
+                   + f" ({'+' if _ms_r.get('squeeze_score',0)>=0 else ''}"
+                   f"{_ms_r.get('squeeze_score',0)}pts)</span>"
+                   if _ms_r.get('squeeze_label') else "")
+                + (f"<span style='font-weight:700;"
+                   f"color:{_ms_r.get('adx_clr','#64748b')}'>"
+                   f"{_ms_r.get('adx_label','')}</span>"
+                   if _ms_r.get('adx_label') else "")
+                + "</div>"
                 "<div style='display:flex;gap:12px;flex-wrap:wrap;"
                 "padding-top:5px;border-top:1px solid #e2e8f0'>"
                 f"<span>💰 <b style='color:{_de_clr}'>{_de_str}</b></span>"
                 f"<span>👤 <b style='color:{_prom_clr}'>{_prom_str}</b></span>"
                 f"{_eps_html}"
                 f"{_ew_html}"
-                "</div></div>",
+                + (f"<span style='color:{_ms_r.get('risk_clr','#64748b')};font-weight:700'>"
+                   f"⚖️ {_ms_r.get('risk_label','')}"
+                   f"{' — ' + _ms_r.get('risk_reason','') if _ms_r.get('risk_reason','') not in ('','No adjustment') else ''}"
+                   f"</span>"
+                   if _ms_r.get('risk_reason','') not in ('','No adjustment') else "")
+                + "</div></div>",
                 unsafe_allow_html=True)
 
             # ── Targets ───────────────────────────────
+            _ms_atr_v    = _ms_r.get('atr7', _ms_r.get('atr', 0))
+            _ms_rd_v     = _ms_r.get('risk_per_share', _entry - _sl if _entry > _sl else 1)
+            _ms_adj_r    = _ms_r.get('adj_risk_pct', _ms_risk)
+            _ms_risk_lbl2= _ms_r.get('risk_label', '')
+            _ms_risk_rsn2= _ms_r.get('risk_reason', '')
+            _ms_orig_qty = max(1, int((_ms_capital * _ms_risk / 100) / _ms_rd_v)) \
+                           if _ms_rd_v > 0 else _qty
+            _ms_size_cut = _qty < _ms_orig_qty * 0.95
             st.markdown(f"""
             <div style='display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px'>
-                <div style='background:#fee2e2;border-radius:10px;padding:10px 14px;
-                            flex:1;min-width:80px;text-align:center'>
+                <div style='background:#fee2e2;border:2px solid #fca5a5;border-radius:10px;
+                            padding:10px 14px;flex:1;min-width:80px;text-align:center'>
                     <div style='font-size:9px;font-weight:700;color:#dc2626;
                                 letter-spacing:1px'>STOP LOSS</div>
                     <div style='font-size:17px;font-weight:800;color:#dc2626;
                                 font-family:JetBrains Mono;margin:3px 0'>
                         ₹{_sl:,.2f}</div>
                     <div style='font-size:10px;color:#dc2626'>
-                        −{_sl_pct:.1f}% · 2× wkly ATR</div>
+                        −{_sl_pct:.1f}% below SMA20</div>
+                    <div style='font-size:9px;color:#b91c1c;margin-top:3px;font-weight:700'>
+                        ATR ₹{_ms_atr_v:,.2f} · Risk ₹{_ms_rd_v:,.2f}/share</div>
                 </div>
                 <div style='background:#eff6ff;border-radius:10px;padding:10px 14px;
                             flex:1;min-width:80px;text-align:center'>
@@ -12461,18 +15033,34 @@ if _show_monthlyswing:
                 </div>
             </div>""", unsafe_allow_html=True)
 
-            # ── Position info ─────────────────────────
-            st.markdown(f"""
-            <div style='background:#f8fafc;border-radius:8px;padding:8px 14px;
-                        font-size:11px;color:#64748b;
-                        display:flex;gap:20px;flex-wrap:wrap;margin-bottom:4px'>
-                <span>📦 Qty: <b style='color:#1a2035'>{_qty} shares</b></span>
-                <span>💰 Investment: <b style='color:#1a2035'>₹{_inv:,.0f}</b></span>
-                <span>⚠️ Max Risk: <b style='color:#dc2626'>₹{int(_qty*_rd):,}</b></span>
-                <span>🎯 Capital: <b style='color:#1a2035'>₹{_ms_capital:,.0f}</b></span>
-                <span>📊 Risk: <b style='color:#1a2035'>{_ms_risk}%</b></span>
-                <span>⏳ Hold: <b style='color:#7c3aed'>3–5 weeks</b></span>
-            </div>""", unsafe_allow_html=True)
+            # ── Position sizing info ──────────────────
+            _ms_max_loss = int(_qty * _ms_rd_v)
+            st.markdown(
+                f"<div style='background:#f8fafc;border:1.5px solid "
+                f"{'#fcd34d' if _ms_size_cut else '#e2e8f0'};"
+                f"border-radius:10px;padding:10px 14px;margin-bottom:4px'>"
+                f"<div style='display:flex;gap:20px;flex-wrap:wrap;"
+                f"font-size:11px;color:#64748b'>"
+                f"<span>📦 Qty: <b style='color:#1a2035'>{_qty} shares</b></span>"
+                f"<span>💰 Invest: <b style='color:#1a2035'>₹{_inv:,.0f}</b></span>"
+                f"<span>⚠️ Max loss if SL hit: <b style='color:#dc2626'>₹{_ms_max_loss:,}</b></span>"
+                f"<span>⏳ Hold: <b style='color:#7c3aed'>3–5 weeks</b></span>"
+                f"</div>"
+                f"<div style='margin-top:6px;padding-top:6px;border-top:1px solid #e2e8f0;"
+                f"font-size:10px;color:#64748b'>"
+                f"📐 <b>ATR sizing:</b> ₹{_ms_capital:,.0f} × {_ms_adj_r:.2f}% "
+                f"÷ ₹{_ms_rd_v:.2f}/share = "
+                f"<b style='color:#1a2035'>{_qty} shares</b>"
+                + (f" &nbsp;<span style='color:#d97706;font-weight:700'>"
+                   f"(reduced from {_ms_orig_qty} — {_ms_risk_rsn2})</span>"
+                   if _ms_size_cut and _ms_risk_rsn2 else "")
+                + f"</div>"
+                + (f"<div style='margin-top:4px;font-size:10px;font-weight:700;"
+                   f"color:{_ms_r.get('risk_clr','#64748b')}'>"
+                   f"⚖️ {_ms_risk_lbl2}</div>"
+                   if _ms_size_cut else "")
+                + f"</div>",
+                unsafe_allow_html=True)
 
             # ── Confident Score Breakdown Strip ──────────
             st.markdown(
@@ -12501,7 +15089,7 @@ if _show_monthlyswing:
                 f"</div>"
                 f"<div style='background:white;border-radius:6px;padding:4px 8px;"
                 f"text-align:center;min-width:44px'>"
-                f"<div style='font-size:8px;color:#94a3b8;font-weight:700'>HH+HL</div>"
+                f"<div style='font-size:8px;color:#94a3b8;font-weight:700'>STRUCT</div>"
                 f"<div style='font-size:13px;font-weight:800;color:#1a2035'>{_ms_c3}/15</div>"
                 f"</div>"
                 f"<div style='background:white;border-radius:6px;padding:4px 8px;"
@@ -12519,6 +15107,22 @@ if _show_monthlyswing:
                 f"<div style='font-size:8px;color:#94a3b8;font-weight:700'>LIQ</div>"
                 f"<div style='font-size:13px;font-weight:800;color:#1a2035'>{_ms_c6}/5</div>"
                 f"</div>"
+                f"<div style='background:white;border-radius:6px;padding:4px 8px;"
+                f"text-align:center;min-width:44px'>"
+                f"<div style='font-size:8px;color:#94a3b8;font-weight:700'>F&O</div>"
+                f"<div style='font-size:13px;font-weight:800;"
+                f"color:{'#15803d' if _ms_c7>0 else '#dc2626' if _ms_c7<0 else '#1a2035'}'>"
+                f"{'+' if _ms_c7>0 else ''}{_ms_c7}</div>"
+                f"</div>"
+                f"<div style='background:white;border-radius:6px;padding:4px 8px;"
+                f"text-align:center;min-width:54px'>"
+                f"<div style='font-size:8px;color:#94a3b8;font-weight:700'>SECTOR</div>"
+                + (lambda c8=_ms_r.get('c8_sector',0), nm=_ms_r.get('c8_sector_name',''):
+                   f"<div style='font-size:13px;font-weight:800;"
+                   f"color:{'#15803d' if c8>0 else '#dc2626' if c8<0 else '#1a2035'}'>"
+                   f"{'+' if c8>0 else ''}{c8}</div>"
+                   f"<div style='font-size:8px;color:#64748b'>{nm}</div>")()
+                + f"</div>"
                 f"</div></div></div>",
                 unsafe_allow_html=True)
 
@@ -12742,6 +15346,8 @@ if _show_monthlyswing:
                         'entry':       round(_entry,2),
                         'qty':         _qty,
                         'stop_loss':   _sl,
+                        'atr7':        round(_ms_r.get('atr7', _ms_r.get('atr', 0)), 2),
+                        'risk_per_share': round(_entry - _sl, 2),
                         't1':          _t1,
                         't2':          _t2,
                         't3':          _t3,
@@ -12775,3 +15381,1422 @@ if _show_monthlyswing:
 
         if len(_ms_show) == 0:
             st.info("No signals match this filter. Try 'All' or lower the min score.")
+
+
+# ══════════════════════════════════════════════════════════════
+#  🧪 BACKTEST PAGE
+#  Tests 12 strategies on historical data
+#  Validates app design decisions with real data
+# ══════════════════════════════════════════════════════════════
+
+if _show_backtest:
+
+    st.markdown("""
+    <div class='topbar'>
+        <div class='topbar-title'>🧪 Strategy Backtester — Validate Your Edge</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Helper functions ──────────────────────────────────────
+
+    def bt_add_indicators(df):
+        """Add all technical indicators needed for backtesting."""
+        df = df.copy()
+        df['SMA20']  = df['Close'].rolling(20).mean()
+        df['SMA50']  = df['Close'].rolling(50).mean()
+        df['RSI14']  = 100 - (100 / (1 + (
+            df['Close'].diff().clip(lower=0).rolling(14).mean() /
+            (-df['Close'].diff().clip(upper=0)).rolling(14).mean()
+        )))
+        df['ATR7']   = df['High'].combine(df['Close'].shift(1), max).subtract(
+                       df['Low'].combine(df['Close'].shift(1), min)).rolling(7).mean()
+        df['VolMA']  = df['Volume'].rolling(20).mean()
+        return df.dropna()
+
+    def bt_get_candle(row):
+        """Classify weekly candle pattern."""
+        o, h, l, c = row['Open'], row['High'], row['Low'], row['Close']
+        body   = abs(c - o)
+        rng    = h - l if h > l else 0.001
+        lower  = min(o, c) - l
+        upper  = h - max(o, c)
+        if rng == 0: return 'Doji', 0
+        if c > o and lower > 1.5 * body and upper < 0.3 * rng:
+            return 'Hammer', 15
+        if c > o and body > 0.6 * rng and lower < 0.2 * rng:
+            prev_body = abs(row.get('prev_close', c) - row.get('prev_open', o))
+            if body > prev_body: return 'Bullish Engulfing', 12
+            if body > 0.7 * rng: return 'Strong Bull', 8
+            return 'Mild Bull', 4
+        if c < o and upper > 1.5 * body:
+            return 'Shooting Star', -15
+        if c < o and body > 0.6 * rng:
+            return 'Bearish Engulfing', -12
+        if body < 0.2 * rng:
+            return 'Doji', -5
+        return 'Neutral', 0
+
+    def bt_get_nifty_state(nifty_df, idx):
+        """Get Nifty state at a given index."""
+        try:
+            row = nifty_df.iloc[idx]
+            sma20 = nifty_df['SMA20'].iloc[idx]
+            sma50 = nifty_df['SMA50'].iloc[idx]
+            close = row['Close']
+            if   close > sma20 > sma50: return 'BULLISH'
+            elif close > sma20:         return 'CAUTION'
+            else:                       return 'BEARISH'
+        except:
+            return 'UNKNOWN'
+
+    def bt_get_fno_zone(date):
+        """Get F&O expiry zone for a given date."""
+        import calendar
+        from datetime import date as date_cls, timedelta
+        if hasattr(date, 'date'):
+            d = date.date()
+        else:
+            d = date
+        year, month = d.year, d.month
+        last_day  = calendar.monthrange(year, month)[1]
+        last_date = date_cls(year, month, last_day)
+        while last_date.weekday() != 3:
+            last_date -= timedelta(days=1)
+        if d > last_date:
+            month = month + 1 if month < 12 else 1
+            year  = year if month > 1 else year + 1
+            last_day  = calendar.monthrange(year, month)[1]
+            last_date = date_cls(year, month, last_day)
+            while last_date.weekday() != 3:
+                last_date -= timedelta(days=1)
+        dte = (last_date - d).days
+        if   dte <= 0:  return 'FRESH'
+        elif dte <= 7:  return 'DANGER'
+        elif dte <= 14: return 'CAUTION'
+        else:           return 'SAFE'
+
+    def bt_simulate_trade(df, entry_idx, entry, sl, t1, t2, max_hold):
+        """Simulate a trade forward and return outcome."""
+        for j in range(1, min(max_hold + 1, len(df) - entry_idx)):
+            future = df.iloc[entry_idx + j]
+            low    = future['Low']
+            high   = future['High']
+            close  = future['Close']
+            psar   = future.get('PSAR', entry)
+            psar_b = close > psar
+
+            # SL hit
+            if low <= sl:
+                return {'outcome': 'LOSS', 'exit': sl,
+                        'exit_reason': 'SL hit',
+                        'hold': j, 'ret': round((sl - entry) / entry * 100, 2)}
+
+            # T2 hit
+            if high >= t2:
+                return {'outcome': 'WIN', 'exit': t2,
+                        'exit_reason': 'T2 hit',
+                        'hold': j, 'ret': round((t2 - entry) / entry * 100, 2)}
+
+            # T1 hit then trail with PSAR
+            if high >= t1 and not psar_b:
+                return {'outcome': 'WIN', 'exit': psar,
+                        'exit_reason': 'PSAR after T1',
+                        'hold': j, 'ret': round((psar - entry) / entry * 100, 2)}
+
+        # Time stop
+        exit_p = float(df['Close'].iloc[min(entry_idx + max_hold, len(df)-1)])
+        outcome = 'WIN' if exit_p > entry else 'LOSS'
+        return {'outcome': outcome, 'exit': exit_p,
+                'exit_reason': 'Time stop',
+                'hold': max_hold,
+                'ret': round((exit_p - entry) / entry * 100, 2)}
+
+    def run_backtest(sym_clean, scanner='monthly', years=3):
+        """
+        Full backtest for a single stock.
+        Returns all trades and statistics.
+        """
+        import warnings
+        warnings.filterwarnings('ignore')
+
+        interval = '1wk' if scanner == 'monthly' else '1d'
+        max_hold = 5 if scanner == 'monthly' else 10  # weeks/days
+
+        # Fetch stock data
+        t   = yf.Ticker(sym_clean + '.NS')
+        df  = t.history(period=f'{years}y', interval=interval,
+                        auto_adjust=True, actions=False)
+        if df is None or len(df) < 60:
+            return None
+
+        df.columns = [c.split(' ')[0] if ' ' in str(c) else c for c in df.columns]
+        df = bt_add_indicators(df)
+
+        # Fetch Nifty for RS/state checks
+        try:
+            nf  = yf.Ticker('^NSEI')
+            ndf = nf.history(period=f'{years}y', interval=interval,
+                             auto_adjust=True, actions=False)
+            ndf.columns = [c.split(' ')[0] if ' ' in str(c) else c for c in ndf.columns]
+            ndf = bt_add_indicators(ndf)
+            ndf = ndf.reindex(df.index, method='nearest')
+        except:
+            ndf = df.copy()
+
+        # Add PSAR
+        step   = 0.01 if scanner == 'monthly' else 0.02
+        max_af = 0.10 if scanner == 'monthly' else 0.20
+        try:
+            df_ps = calc_psar(df.copy(), step=step, max_af=max_af)
+            df['PSAR']       = df_ps['PSAR']
+            df['PSAR_Bull']  = df_ps['PSAR_Bull'] if 'PSAR_Bull' in df_ps.columns else (df['Close'] > df_ps['PSAR'])
+        except:
+            df['PSAR']      = df['SMA20'] * 0.95
+            df['PSAR_Bull'] = df['Close'] > df['PSAR']
+
+        trades = []
+
+        for i in range(52, len(df) - max_hold - 1):
+            row    = df.iloc[i]
+            sma20  = float(row['SMA20'])
+            sma50  = float(row['SMA50'])
+            close  = float(row['Close'])
+            rsi    = float(row['RSI14'])
+            atr    = float(row['ATR7'])
+            psar   = float(row['PSAR'])
+            psar_b = bool(row['PSAR_Bull'])
+
+            if sma20 <= 0 or sma50 <= 0 or close <= 0:
+                continue
+
+            # ── Core entry gates ──────────────────────────
+            if sma20 <= sma50:   continue
+            if close <= sma20:   continue
+            if rsi > 70:         continue
+
+            sma20_prev = float(df['SMA20'].iloc[i-5])
+            sma20_slope = (sma20 - sma20_prev) / sma20_prev * 100 if sma20_prev > 0 else 0
+            if sma20_slope <= 0: continue
+
+            pct_above = (close - sma20) / sma20 * 100
+
+            # ── Candle ────────────────────────────────────
+            row2 = row.copy()
+            row2['prev_close'] = float(df['Close'].iloc[i-1])
+            row2['prev_open']  = float(df['Open'].iloc[i-1])
+            candle_name, candle_score = bt_get_candle(row2)
+
+            if candle_name in ('Shooting Star', 'Bearish Engulfing',
+                               'Bearish', 'Doji'):
+                continue  # always skip bearish candles
+
+            # ── Additional data ───────────────────────────
+            nifty_state = bt_get_nifty_state(ndf, i)
+            try:
+                trade_date  = df.index[i]
+                fno_zone    = bt_get_fno_zone(trade_date)
+                is_fno      = sym_clean.upper() in FNO_STOCKS
+            except:
+                fno_zone = 'SAFE'
+                is_fno   = False
+
+            # ── Signal type ───────────────────────────────
+            # Check if SMA cross recently
+            sma_cross = False
+            for k in range(1, 4):
+                if i-k >= 0:
+                    prev_sma20 = float(df['SMA20'].iloc[i-k])
+                    prev_sma50 = float(df['SMA50'].iloc[i-k])
+                    if prev_sma20 <= prev_sma50 and sma20 > sma50:
+                        sma_cross = True
+            signal_type = 'SMA Cross' if sma_cross else 'Pullback Bounce'
+
+            # ── Trade plan ────────────────────────────────
+            entry = close
+            sl    = round(sma20 * 0.97, 2)
+            t1    = round(entry + 1 * atr, 2)
+            t2    = round(entry + 2 * atr, 2)
+            rr    = round((t2 - entry) / (entry - sl), 2) if entry > sl else 0
+
+            if entry <= sl or rr < 1.0:
+                continue
+
+            # ── Simulate ──────────────────────────────────
+            result = bt_simulate_trade(df, i, entry, sl, t1, t2, max_hold)
+
+            trades.append({
+                'date':         str(df.index[i])[:10],
+                'entry':        round(entry, 2),
+                'sl':           sl,
+                't1':           t1,
+                't2':           t2,
+                'exit':         round(result['exit'], 2),
+                'exit_reason':  result['exit_reason'],
+                'hold':         result['hold'],
+                'return_pct':   result['ret'],
+                'outcome':      result['outcome'],
+                'candle':       candle_name,
+                'candle_score': candle_score,
+                'psar_bullish': psar_b,
+                'nifty_state':  nifty_state,
+                'fno_zone':     fno_zone,
+                'is_fno':       is_fno,
+                'pct_above':    round(pct_above, 2),
+                'signal_type':  signal_type,
+                'rsi':          round(rsi, 1),
+                'rr_t2':        rr,
+                'strict_pass':  (psar_b and candle_name in
+                                 ('Hammer','Bullish Engulfing','Strong Bull')),
+            })
+
+        return trades
+
+    def calc_bt_stats(trades, filter_fn=None):
+        """Calculate statistics for a list of trades."""
+        if filter_fn:
+            trades = [t for t in trades if filter_fn(t)]
+        if not trades:
+            return None
+        wins   = [t for t in trades if t['outcome'] == 'WIN']
+        losses = [t for t in trades if t['outcome'] == 'LOSS']
+        win_rate  = len(wins) / len(trades) * 100 if trades else 0
+        avg_win   = sum(t['return_pct'] for t in wins)   / len(wins)   if wins   else 0
+        avg_loss  = abs(sum(t['return_pct'] for t in losses) / len(losses)) if losses else 0
+        rr        = avg_win / avg_loss if avg_loss > 0 else 0
+        # Max drawdown (equity curve)
+        equity = 100.0
+        peak   = 100.0
+        max_dd = 0.0
+        for t in trades:
+            equity *= (1 + t['return_pct'] / 100)
+            if equity > peak: peak = equity
+            dd = (peak - equity) / peak * 100
+            if dd > max_dd: max_dd = dd
+        return {
+            'total':    len(trades),
+            'wins':     len(wins),
+            'losses':   len(losses),
+            'win_rate': round(win_rate, 1),
+            'avg_win':  round(avg_win, 2),
+            'avg_loss': round(avg_loss, 2),
+            'rr':       round(rr, 2),
+            'max_dd':   round(max_dd, 2),
+            'total_ret':round(sum(t['return_pct'] for t in trades), 2),
+            'equity':   round(equity, 2),
+        }
+
+    def show_stats_row(stats, label=''):
+        """Display a stats row with colored metrics."""
+        if not stats:
+            st.warning(f"No trades found for {label}")
+            return
+        wr_clr = '🟢' if stats['win_rate'] >= 65 else ('🟡' if stats['win_rate'] >= 50 else '🔴')
+        rr_clr = '🟢' if stats['rr'] >= 2.0 else ('🟡' if stats['rr'] >= 1.5 else '🔴')
+        c1,c2,c3,c4,c5,c6 = st.columns(6)
+        c1.metric("Trades",    stats['total'])
+        c2.metric("Win Rate",  f"{wr_clr} {stats['win_rate']:.1f}%")
+        c3.metric("Avg Win",   f"+{stats['avg_win']:.1f}%")
+        c4.metric("Avg Loss",  f"-{stats['avg_loss']:.1f}%")
+        c5.metric("R:R",       f"{rr_clr} {stats['rr']:.1f}:1")
+        c6.metric("Max DD",    f"-{stats['max_dd']:.1f}%")
+
+    def show_breakdown_chart(trades, group_fn, group_labels, title):
+        """Show a breakdown bar chart by group."""
+        groups = {}
+        for t in trades:
+            key = group_fn(t)
+            if key not in groups:
+                groups[key] = []
+            groups[key].append(t)
+
+        rows = []
+        for label in group_labels:
+            if label in groups:
+                s = calc_bt_stats(groups[label])
+                if s:
+                    rows.append({'Group': label,
+                                 'Win Rate': s['win_rate'],
+                                 'Trades': s['total'],
+                                 'Avg Win': s['avg_win']})
+
+        if rows:
+            import pandas as pd
+            df_chart = pd.DataFrame(rows).set_index('Group')
+            st.write(f"**{title}**")
+            st.bar_chart(df_chart[['Win Rate']])
+            st.dataframe(df_chart, use_container_width=True)
+
+    # ─────────────────────────────────────────────────────────
+    #  BACKTEST PAGE UI
+    # ─────────────────────────────────────────────────────────
+
+    st.markdown(
+        "<div style='background:#0f172a;border:1px solid #1e3a8a;"
+        "border-radius:12px;padding:14px 20px;margin-bottom:20px'>"
+        "<div style='font-size:13px;font-weight:800;color:#93c5fd'>🧪 Strategy Backtester</div>"
+        "<div style='font-size:11px;color:#64748b;margin-top:4px'>"
+        "Tests your strategy on 2-3 years of historical data · "
+        "Validates app design decisions with real numbers · "
+        "12 strategies compared side by side"
+        "</div></div>",
+        unsafe_allow_html=True)
+
+    # Controls
+    _bt_col1, _bt_col2, _bt_col3, _bt_col4 = st.columns(4)
+    with _bt_col1:
+        _bt_sym = st.text_input(
+            "Stock Symbol",
+            value="KOTAKBANK",
+            help="NSE symbol without .NS").upper().strip()
+    with _bt_col2:
+        _bt_scanner = st.selectbox(
+            "Scanner Type",
+            ["Monthly Swing", "SMA Weekly"],
+            help="Which scanner rules to apply")
+    with _bt_col3:
+        _bt_years = st.selectbox(
+            "Test Period",
+            [2, 3, 5],
+            index=1,
+            help="Years of historical data")
+    with _bt_col4:
+        st.markdown("<br>", unsafe_allow_html=True)
+        _bt_run = st.button(
+            "🧪 Run Backtest",
+            type="primary",
+            use_container_width=True)
+
+    if _bt_run:
+        _scanner_key = 'monthly' if 'Monthly' in _bt_scanner else 'weekly'
+
+        with st.spinner(f'Running backtest for {_bt_sym} ({_bt_years} years)...'):
+            _bt_trades = run_backtest(_bt_sym, _scanner_key, _bt_years)
+
+        if not _bt_trades:
+            st.error(f"❌ No data found for {_bt_sym} or insufficient history")
+        else:
+            st.session_state['bt_trades']  = _bt_trades
+            st.session_state['bt_sym']     = _bt_sym
+            st.session_state['bt_scanner'] = _bt_scanner
+
+    # Show results if available
+    if 'bt_trades' in st.session_state:
+        _bt_trades  = st.session_state['bt_trades']
+        _bt_sym     = st.session_state.get('bt_sym', '')
+        _bt_scanner = st.session_state.get('bt_scanner', '')
+
+        if not _bt_trades:
+            st.warning("No signals found for this stock/period")
+        else:
+            # ── Summary ──────────────────────────────────
+            st.markdown("---")
+            st.markdown(f"### 📊 {_bt_sym} — {_bt_scanner} Backtest Results")
+
+            _all_stats = calc_bt_stats(_bt_trades)
+            if _all_stats:
+                _wr = _all_stats['win_rate']
+                _verdict_clr = '#15803d' if _wr >= 65 else ('#d97706' if _wr >= 50 else '#dc2626')
+                _verdict_bg  = '#f0fdf4' if _wr >= 65 else ('#fffbeb' if _wr >= 50 else '#fef2f2')
+                _verdict_ico = '✅' if _wr >= 65 else ('⚠️' if _wr >= 50 else '❌')
+                _verdict_txt = ('Strategy works well — trade with confidence' if _wr >= 65
+                                else 'Marginal strategy — reduce size' if _wr >= 50
+                                else 'Poor performance — review rules')
+
+                st.markdown(
+                    f"<div style='background:{_verdict_bg};border:1.5px solid {_verdict_clr}44;"
+                    f"border-radius:10px;padding:12px 18px;margin-bottom:12px'>"
+                    f"<span style='font-size:20px'>{_verdict_ico}</span>"
+                    f"<span style='font-size:14px;font-weight:800;color:{_verdict_clr};margin-left:10px'>"
+                    f"Win Rate {_wr:.1f}% — {_verdict_txt}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True)
+
+                show_stats_row(_all_stats)
+
+            # ── 12 Strategy Breakdowns ────────────────────
+            st.markdown("---")
+            _strat_tab = st.tabs([
+                "S1 Core", "S2 Strict vs Normal", "S3 Candle Quality",
+                "S4 Entry Proximity", "S5 Nifty State", "S6 F&O Expiry",
+                "S7 Confident Score", "S8 Signal Type", "S9 PA Signal",
+                "S10 Hold Period", "S11 Sector", "S12 Trades"
+            ])
+
+            # S1 — Core strategy stats
+            with _strat_tab[0]:
+                st.markdown("**Strategy 1 — Core Strategy Performance**")
+                st.caption("Overall win rate using all current app rules")
+                show_stats_row(calc_bt_stats(_bt_trades), "Core")
+
+                # Equity curve
+                import pandas as pd
+                _equity = [100.0]
+                for t in _bt_trades:
+                    _equity.append(_equity[-1] * (1 + t['return_pct'] / 100))
+                _eq_df = pd.DataFrame({'Equity Curve': _equity})
+                st.line_chart(_eq_df)
+
+            # S2 — Strict vs Normal
+            with _strat_tab[1]:
+                st.markdown("**Strategy 2 — Strict Mode vs Normal Mode**")
+                st.caption("Does PSAR + Hammer requirement improve win rate?")
+                _sc1, _sc2 = st.columns(2)
+                with _sc1:
+                    st.markdown("🛡️ **Strict Mode** (PSAR + Hammer/Engulf)")
+                    show_stats_row(
+                        calc_bt_stats(_bt_trades,
+                            lambda t: t['strict_pass']), "Strict")
+                with _sc2:
+                    st.markdown("📊 **Normal Mode** (All signals)")
+                    show_stats_row(
+                        calc_bt_stats(_bt_trades,
+                            lambda t: not t['strict_pass']), "Normal")
+
+            # S3 — Candle quality
+            with _strat_tab[2]:
+                st.markdown("**Strategy 3 — Candle Quality Impact**")
+                st.caption("Which candle type performs best?")
+                _candles = ['Hammer','Bullish Engulfing','Strong Bull','Mild Bull','Neutral']
+                for _c in _candles:
+                    _cs = calc_bt_stats(_bt_trades, lambda t,c=_c: t['candle'] == c)
+                    if _cs and _cs['total'] > 0:
+                        _ico = '🔨' if _c=='Hammer' else '🟢' if 'Engulf' in _c else '💚' if 'Strong' in _c else '🟡'
+                        st.markdown(f"**{_ico} {_c}** — {_cs['total']} trades")
+                        show_stats_row(_cs, _c)
+                        st.markdown("---")
+
+            # S4 — Entry proximity
+            with _strat_tab[3]:
+                st.markdown("**Strategy 4 — Entry Proximity Impact**")
+                st.caption("Does entering closer to SMA20 improve results?")
+                _prox_groups = [
+                    ('≤1% (ENTER NOW tight)', lambda t: t['pct_above'] <= 1.0),
+                    ('1-2% (ENTER NOW)',       lambda t: 1.0 < t['pct_above'] <= 2.0),
+                    ('2-3% (ACCEPTABLE)',      lambda t: 2.0 < t['pct_above'] <= 3.0),
+                    ('3-5% (ACCEPTABLE)',      lambda t: 3.0 < t['pct_above'] <= 5.0),
+                    ('>5% (Extended)',         lambda t: t['pct_above'] > 5.0),
+                ]
+                for _label, _fn in _prox_groups:
+                    _ps = calc_bt_stats(_bt_trades, _fn)
+                    if _ps and _ps['total'] > 0:
+                        st.markdown(f"**{_label}** — {_ps['total']} trades")
+                        show_stats_row(_ps, _label)
+                        st.markdown("---")
+
+            # S5 — Nifty state
+            with _strat_tab[4]:
+                st.markdown("**Strategy 5 — Nifty State Impact**")
+                st.caption("Does Nifty state at entry affect win rate?")
+                for _ns in ['BULLISH', 'CAUTION', 'BEARISH']:
+                    _nss = calc_bt_stats(_bt_trades,
+                                         lambda t, n=_ns: t['nifty_state'] == n)
+                    if _nss and _nss['total'] > 0:
+                        _ic = '🟢' if _ns=='BULLISH' else '⚠️' if _ns=='CAUTION' else '🔴'
+                        st.markdown(f"**{_ic} Nifty {_ns}** — {_nss['total']} trades")
+                        show_stats_row(_nss, _ns)
+                        st.markdown("---")
+
+            # S6 — F&O expiry
+            with _strat_tab[5]:
+                st.markdown("**Strategy 6 — F&O Expiry Zone Impact**")
+                st.caption("Does entering in DANGER zone reduce win rate?")
+                for _fz in ['SAFE', 'CAUTION', 'DANGER', 'FRESH']:
+                    _fzs = calc_bt_stats(_bt_trades,
+                                          lambda t, z=_fz: t['fno_zone'] == z)
+                    if _fzs and _fzs['total'] > 0:
+                        _fic = '🟢' if _fz in ('SAFE','FRESH') else '⚠️' if _fz=='CAUTION' else '🔴'
+                        st.markdown(f"**{_fic} {_fz} Zone** — {_fzs['total']} trades")
+                        show_stats_row(_fzs, _fz)
+                        st.markdown("---")
+
+            # S7 — R:R quality (proxy for confident score)
+            with _strat_tab[6]:
+                st.markdown("**Strategy 7 — R:R Quality (Confident Score Proxy)**")
+                st.caption("Does higher R:R at entry = better outcome?")
+                _rr_groups = [
+                    ('R:R ≥ 3.0 (excellent)',  lambda t: t['rr_t2'] >= 3.0),
+                    ('R:R 2.0-3.0 (good)',     lambda t: 2.0 <= t['rr_t2'] < 3.0),
+                    ('R:R 1.5-2.0 (ok)',       lambda t: 1.5 <= t['rr_t2'] < 2.0),
+                    ('R:R < 1.5 (poor)',       lambda t: t['rr_t2'] < 1.5),
+                ]
+                for _label, _fn in _rr_groups:
+                    _rrs = calc_bt_stats(_bt_trades, _fn)
+                    if _rrs and _rrs['total'] > 0:
+                        st.markdown(f"**{_label}** — {_rrs['total']} trades")
+                        show_stats_row(_rrs, _label)
+                        st.markdown("---")
+
+            # S8 — Signal type
+            with _strat_tab[7]:
+                st.markdown("**Strategy 8 — Signal Type Performance**")
+                st.caption("Pullback vs SMA Cross — which is more reliable?")
+                for _st in ['Pullback Bounce', 'SMA Cross']:
+                    _sts = calc_bt_stats(_bt_trades,
+                                         lambda t, s=_st: t['signal_type'] == s)
+                    if _sts and _sts['total'] > 0:
+                        st.markdown(f"**{_st}** — {_sts['total']} trades")
+                        show_stats_row(_sts, _st)
+                        st.markdown("---")
+
+            # S9 — PSAR state
+            with _strat_tab[8]:
+                st.markdown("**Strategy 9 — PSAR State at Entry**")
+                st.caption("PSAR bullish vs bearish at entry")
+                _pc1, _pc2 = st.columns(2)
+                with _pc1:
+                    st.markdown("✅ **PSAR Bullish at entry**")
+                    show_stats_row(
+                        calc_bt_stats(_bt_trades,
+                            lambda t: t['psar_bullish']), "PSAR Bull")
+                with _pc2:
+                    st.markdown("❌ **PSAR Bearish at entry**")
+                    show_stats_row(
+                        calc_bt_stats(_bt_trades,
+                            lambda t: not t['psar_bullish']), "PSAR Bear")
+
+            # S10 — Hold period
+            with _strat_tab[9]:
+                st.markdown("**Strategy 10 — Hold Period Analysis**")
+                st.caption("Optimal number of weeks/days to hold")
+                for _hp in [1, 2, 3, 4, 5]:
+                    _hps = calc_bt_stats(_bt_trades,
+                                         lambda t, h=_hp: t['hold'] == h)
+                    if _hps and _hps['total'] > 0:
+                        unit = 'weeks' if 'Monthly' in _bt_scanner else 'days'
+                        st.markdown(f"**Hold = {_hp} {unit}** — {_hps['total']} trades")
+                        show_stats_row(_hps, f"{_hp}{unit}")
+                        st.markdown("---")
+
+            # S11 — Exit reason
+            with _strat_tab[10]:
+                st.markdown("**Strategy 11 — Exit Reason Analysis**")
+                st.caption("T2 hit vs PSAR vs SL vs Time stop")
+                for _er in ['T2 hit', 'PSAR after T1', 'SL hit', 'Time stop']:
+                    _ers = calc_bt_stats(_bt_trades,
+                                         lambda t, e=_er: t['exit_reason'] == e)
+                    if _ers and _ers['total'] > 0:
+                        st.markdown(f"**{_er}** — {_ers['total']} trades")
+                        show_stats_row(_ers, _er)
+                        st.markdown("---")
+
+            # S12 — All trades table
+            with _strat_tab[11]:
+                st.markdown("**Strategy 12 — All Trades History**")
+                st.caption(f"Complete list of {len(_bt_trades)} historical trades")
+                import pandas as pd
+                _df_trades = pd.DataFrame(_bt_trades)
+                _df_trades['outcome_ico'] = _df_trades['outcome'].map(
+                    {'WIN': '✅ WIN', 'LOSS': '❌ LOSS'})
+                _display_cols = ['date','entry','exit','exit_reason','hold',
+                                 'return_pct','candle','psar_bullish',
+                                 'nifty_state','fno_zone','outcome_ico']
+                _display_cols = [c for c in _display_cols if c in _df_trades.columns]
+                st.dataframe(
+                    _df_trades[_display_cols].rename(columns={
+                        'date': 'Date', 'entry': 'Entry', 'exit': 'Exit',
+                        'exit_reason': 'Exit Reason', 'hold': 'Hold',
+                        'return_pct': 'Return %', 'candle': 'Candle',
+                        'psar_bullish': 'PSAR ✅',
+                        'nifty_state': 'Nifty', 'fno_zone': 'F&O Zone',
+                        'outcome_ico': 'Result'
+                    }),
+                    use_container_width=True,
+                    height=400)
+
+                # Download
+                _csv_bt = _df_trades.to_csv(index=False)
+                st.download_button(
+                    f"⬇️ Download {_bt_sym} Backtest CSV",
+                    _csv_bt,
+                    f"backtest_{_bt_sym}_{_bt_scanner.replace(' ','_')}.csv",
+                    "text/csv")
+
+# ══════════════════════════════════════════════════════════════
+#  🏆 SECTOR LEADERS PAGE
+#  Step 1: Rank sectors by ETF performance (weighted RS)
+#  Step 2: Pick top 3 sectors automatically
+#  Step 3: Fetch all stocks from those sectors (hardcoded)
+#  Step 4: Apply full app logic to scan those stocks
+#  Step 5: Show results grouped by sector
+# ══════════════════════════════════════════════════════════════
+
+# ── Sector ETF tickers for performance ranking ────────────────
+SECTOR_ETF_TICKERS = {
+    'BANKING':    '^NSEBANK',
+    'IT':         '^CNXIT',
+    'AUTO':       '^CNXAUTO',
+    'PHARMA':     '^CNXPHARMA',
+    'FMCG':       '^CNXFMCG',
+    'METALS':     '^CNXMETAL',
+    'ENERGY':     '^CNXENERGY',
+    'REALTY':     '^CNXREALTY',
+    'INFRA':      '^CNXINFRA',
+    'FINANCE':    '^CNXFIN',
+    'PSU_BANK':   '^CNXPSUBANK',
+    'MEDIA':      '^CNXMEDIA',
+    'CONSUMER':   '^CNXCONSUM',
+    'DEFENCE':    '^CNXINFRA',   # proxy
+}
+
+# ── Complete stock universe per sector ────────────────────────
+# Based on NSE sector index constituents
+# Updated as of June 2026
+SECTOR_STOCKS_MAP = {
+
+    'BANKING': [
+        'HDFCBANK','ICICIBANK','KOTAKBANK','AXISBANK','SBIN',
+        'INDUSINDBK','BANDHANBNK','IDFCFIRSTB','FEDERALBNK',
+        'AUBANK','RBLBANK','CANBK','PNB','BANKBARODA',
+        'UNIONBANK','INDIANB','CUB','KARURVYSYA',
+    ],
+
+    'PSU_BANK': [
+        'SBIN','PNB','CANBK','BANKBARODA','UNIONBANK',
+        'INDIANB','IOB','CENTRALBK','UCOBANK','BANKINDIA',
+        'MAHABANK',
+    ],
+
+    'FINANCE': [
+        'BAJFINANCE','BAJAJFINSV','CHOLAFIN','MUTHOOTFIN',
+        'SHRIRAMFIN','MANAPPURAM','M&MFIN','PNBHOUSING',
+        'LICHSGFIN','CANFINHOME','360ONE','ANANDRATHI',
+        'MOTILALOFS','ANGELONE','HDFCAMC','ABSLAMC',
+        'NAM-INDIA','CDSL','CAMS','BSE','MCX',
+    ],
+
+    'IT': [
+        'TCS','INFY','WIPRO','HCLTECH','TECHM',
+        'LTIM','MPHASIS','COFORGE','PERSISTENT','OFSS',
+        'KPITTECH','TATAELXSI','CYIENT','NEWGEN',
+        'LATENTVIEW','ECLERX','AFFLE','BSOFT',
+    ],
+
+    'PHARMA': [
+        'SUNPHARMA','DRREDDY','CIPLA','DIVISLAB','AUROPHARMA',
+        'ALKEM','LUPIN','TORNTPHARM','IPCALAB','GRANULES',
+        'GLENMARK','NATCOPHARM','LAURUSLABS','MANKIND',
+        'JBCHEPHARM','ZYDUSLIFE','BIOCON','GLAND',
+        'APOLLOHOSP','MAXHEALTH','FORTIS',
+    ],
+
+    'FMCG': [
+        'HINDUNILVR','ITC','NESTLEIND','BRITANNIA','DABUR',
+        'MARICO','TATACONSUM','GODREJCP','COLPAL','EMAMILTD',
+        'VBL','RADICO','UNITDSPR','JYOTHYLAB','BIKAJI',
+        'PATANJALI','GILLETTE',
+    ],
+
+    'AUTO': [
+        'MARUTI','TATAMOTORS','M&M','BAJAJ-AUTO','HEROMOTOCO',
+        'EICHERMOT','TVSMOTOR','ASHOKLEY','ESCORTS',
+        'MOTHERSON','BHARATFORG','BOSCHLTD','TIINDIA',
+        'ENDURANCE','SONACOMS','APOLLOTYRE','CEATLTD',
+        'BALKRISIND','MRF','EXIDEIND','UNOMINDA',
+    ],
+
+    'METALS': [
+        'TATASTEEL','JSWSTEEL','HINDALCO','SAIL','VEDL',
+        'NATIONALUM','NMDC','COALINDIA','HINDCOPPER',
+        'WELCORP','JINDALSTEL','JSL','HINDZINC','MOIL',
+        'GPIL','GRAVITA',
+    ],
+
+    'ENERGY': [
+        'RELIANCE','ONGC','BPCL','IOC','NTPC',
+        'POWERGRID','ADANIPOWER','TATAPOWER','GAIL',
+        'PETRONET','IGL','MGL','ATGL','TORNTPOWER',
+        'HINDPETRO','OIL','CESC',
+    ],
+
+    'INFRA': [
+        'LT','SIEMENS','ABB','BHEL','THERMAX',
+        'CUMMINSIND','KEC','KPIL','NCC','NBCC',
+        'IRB','ENGINERSIN','RITES','IRCON',
+        'CONCOR','GMRAIRPORT','JSWINFRA','AFCONS',
+        'AIAENG','ACE','TITAGARH',
+    ],
+
+    'DEFENCE': [
+        'HAL','BEL','BDL','BEML','COCHINSHIP',
+        'GRSE','MAZDOCK','DATAPATTNS','PARAS',
+        'RVNL','IRFC','IRCTC','RAILTEL',
+    ],
+
+    'REALTY': [
+        'DLF','GODREJPROP','PRESTIGE','OBEROIRLTY',
+        'BRIGADE','SOBHA','PHOENIXLTD','ANANTRAJ',
+        'LODHA','SIGNATURE','CHALET','DBREALTY',
+    ],
+
+    'CONSUMER': [
+        'HAVELLS','VOLTAS','CROMPTON','DIXON','AMBER',
+        'BATAINDIA','VGUARD','POLYCAB','KEI','RRKABEL',
+        'BLUESTARCO','CGPOWER','SOLARINDS','CERA',
+        'KAJARIACER','CENTURYPLY','ASTRAL','APLAPOLLO',
+        'SUPREMEIND','TRIDENT','APARINDS',
+    ],
+
+    'CHEMICALS': [
+        'PIDILITIND','ASIANPAINT','BERGEPAINT','AARTIIND',
+        'DEEPAKNTR','NAVINFLUOR','SRF','ATUL','PIIND',
+        'TATACHEM','UPL','CLEAN','FLUOROCHEM',
+        'DCMSHRIRAM','BASF','CASTROLIND',
+    ],
+
+    'TELECOM': [
+        'BHARTIARTL','IDEA','TATACOMM','HFCL',
+        'INDUSTOWER','TEJASNET','BHARTIHEXA',
+    ],
+
+    'SOLAR': [
+        'WAAREEENER','SUZLON','ADANIGREEN','NHPC',
+        'SJVN','INOXWIND','NTPCGREEN','JSWENERGY',
+        'ADANIENSOL','TATAPOWER',
+    ],
+}
+
+# ══════════════════════════════════════════════════════════════
+#  🏆 SECTOR LEADERS PAGE — CSV Upload Based
+#  Upload NSE sector CSVs (one per sector)
+#  Auto-detects sector name from filename
+#  Ranks sectors by weighted RS vs Nifty
+#  Scans stocks from top N sectors
+# ══════════════════════════════════════════════════════════════
+
+# ══════════════════════════════════════════════════════════════
+#  🏆 SECTOR LEADERS PAGE — Folder-Based CSV Auto-Load
+#  Place NSE sector CSVs in:
+#    /Users/balaji/Desktop/Intraday_APP/Trading/sectors/
+#  App reads all CSVs from that folder automatically
+#  Just paste updated CSVs — no code change needed
+# ══════════════════════════════════════════════════════════════
+
+import os as _os
+import glob as _glob
+
+# ── Sector folder paths (checks both users) ───────────────────
+_SECTOR_FOLDER_PATHS = [
+    # Balaji's Mac
+    _os.path.join(_os.path.expanduser('~'),
+        'Desktop', 'Intraday_APP', 'Trading', 'sectors'),
+    # Jeganath's Mac
+    _os.path.join(_os.path.expanduser('~'),
+        'Desktop', 'Balaji', 'Trading', 'sectors'),
+    # Same folder as app file
+    _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), 'sectors'),
+    # Current working directory
+    _os.path.join(_os.getcwd(), 'sectors'),
+]
+
+def _sl_find_sector_folder():
+    """Find the first existing sectors folder."""
+    for _p in _SECTOR_FOLDER_PATHS:
+        if _os.path.isdir(_p):
+            return _p
+    return None
+
+def _sl_load_sector_csvs(folder):
+    """
+    Load all CSVs from the sectors folder.
+    Returns dict: {sector_name: [symbols]}
+    """
+    import pandas as _pd2
+    import re as _re2
+
+    _result = {}
+    _errors = []
+    _csvs   = _glob.glob(_os.path.join(folder, '*.csv'))
+
+    def _extract_name(filename):
+        fn = _os.path.basename(filename).lower().replace('.csv','')
+        m  = _re2.search(r'ind_nifty(.+?)list', fn)
+        if m:
+            raw = m.group(1).strip('_').replace('_',' ').lower()
+            _map = {
+                'auto':             'AUTO',
+                'banking':          'BANKING',
+                'financialservices':'FINANCE',
+                'financial':        'FINANCE',
+                'fmcg':             'FMCG',
+                'healthcare':       'HEALTHCARE',
+                'it':               'IT',
+                'media':            'MEDIA',
+                'metal':            'METALS',
+                'oilgas':           'ENERGY',
+                'oil':              'ENERGY',
+                'pharma':           'PHARMA',
+                'privatebanking':   'PVTBANK',
+                'private':          'PVTBANK',
+                'psubanking':       'PSUBANK',
+                'psu':              'PSUBANK',
+                'realty':           'REALTY',
+                'consumer':         'CONSUMER',
+                'infra':            'INFRA',
+                'defence':          'DEFENCE',
+                'energy':           'ENERGY',
+                'services':         'SERVICES',
+                'midcap':           'MIDCAP',
+                'smallcap':         'SMALLCAP',
+            }
+            for k, v in _map.items():
+                if k in raw:
+                    return v
+            return raw.replace(' ','_').upper()[:12]
+        # Non-NSE filename — use as-is
+        base = _os.path.basename(filename).replace('.csv','')
+        return base.upper()[:12]
+
+    for _csv in sorted(_csvs):
+        try:
+            _df = _pd2.read_csv(_csv)
+            # Find Symbol column
+            _sym_col = next(
+                (c for c in _df.columns
+                 if c.strip().upper() in ('SYMBOL','NSE SYMBOL',
+                                           'NSE_SYMBOL','SCRIP','TICKER')),
+                None)
+            if not _sym_col:
+                _sym_col = next(
+                    (c for c in _df.columns
+                     if 'SYMBOL' in c.upper()),
+                    None)
+            if not _sym_col:
+                _errors.append(
+                    f"⚠️ {_os.path.basename(_csv)} — "
+                    f"no Symbol column (found: {list(_df.columns[:3])})")
+                continue
+            _syms = (_df[_sym_col].dropna()
+                     .str.strip().str.upper().tolist())
+            _sec  = _extract_name(_csv)
+            _result[_sec] = _syms
+        except Exception as _e:
+            _errors.append(f"⚠️ {_os.path.basename(_csv)} — {_e}")
+
+    return _result, _errors
+
+
+if _show_sectorleaders:
+
+    st.markdown("""
+    <div class='topbar'>
+        <div class='topbar-title'>🏆 Sector Leaders — Auto-Load from Sectors Folder</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ── Find sectors folder ───────────────────────────────
+    _sl_folder = _sl_find_sector_folder()
+
+    # ── Folder path info banner ───────────────────────────
+    if _sl_folder:
+        _sl_csv_files = _glob.glob(_os.path.join(_sl_folder,'*.csv'))
+        st.markdown(
+            f"<div style='background:#0c1f12;border:1.5px solid #16a34a;"
+            f"border-radius:10px;padding:12px 18px;margin-bottom:14px'>"
+            f"<div style='font-size:12px;font-weight:800;color:#34d399'>✅ Sectors Folder Found</div>"
+            f"<div style='font-size:11px;color:#86efac;margin-top:4px;font-family:monospace'>"
+            f"{_sl_folder}</div>"
+            f"<div style='font-size:11px;color:#64748b;margin-top:4px'>"
+            f"{len(_sl_csv_files)} CSV files found · "
+            f"Just paste updated CSVs here — app reloads automatically</div>"
+            f"</div>",
+            unsafe_allow_html=True)
+    else:
+        # Show setup instructions
+        st.markdown(
+            "<div style='background:#1f0c0c;border:1.5px solid #991b1b;"
+            "border-radius:10px;padding:14px 18px;margin-bottom:14px'>"
+            "<div style='font-size:12px;font-weight:800;color:#fca5a5'>"
+            "⚠️ Sectors Folder Not Found — Create it first</div>"
+            "<div style='font-size:11px;color:#fecaca;margin-top:8px;line-height:1.8'>"
+            "Create this folder on your Mac:"
+            "</div>",
+            unsafe_allow_html=True)
+
+        # Show paths to create
+        for _p in _SECTOR_FOLDER_PATHS[:3]:
+            st.code(_p, language=None)
+
+        st.markdown(
+            "<div style='background:#0f172a;border:1px solid #334155;"
+            "border-radius:8px;padding:12px 16px;margin-top:8px'>"
+            "<div style='font-size:12px;font-weight:700;color:#93c5fd'>"
+            "Terminal command to create folder:</div>"
+            "</div>",
+            unsafe_allow_html=True)
+
+        # Show terminal commands
+        _balaji_path = _SECTOR_FOLDER_PATHS[0]
+        st.code(
+            f"mkdir -p \"{_balaji_path}\"",
+            language="bash")
+
+        st.info(
+            "After creating the folder, download NSE sector CSVs and paste them there. "
+            "App will auto-detect and load them.")
+
+    # ── How it works ──────────────────────────────────────
+    with st.expander("📋 Setup Guide — How to get NSE sector CSVs"):
+        st.markdown(f"""
+**Folder location (create this):**
+```
+{_SECTOR_FOLDER_PATHS[0]}
+```
+
+**Step 1 — Create the folder:**
+```bash
+mkdir -p "{_SECTOR_FOLDER_PATHS[0]}"
+```
+
+**Step 2 — Download CSVs from NSE:**
+```
+Go to: nseindia.com
+→ Market Data → Indices
+→ Equity Indices
+→ Nifty Sectoral Indices
+→ Click any sector → Download CSV
+```
+
+**Step 3 — Paste CSVs into folder:**
+```
+Just copy downloaded files into:
+{_SECTOR_FOLDER_PATHS[0]}
+
+App picks them up automatically
+No restart needed
+```
+
+**Available sector CSVs from NSE:**
+| File | Sector |
+|------|--------|
+| ind_niftyautolist.csv | AUTO |
+| ind_niftybankinglist.csv | BANKING |
+| ind_niftypharmalist.csv | PHARMA |
+| ind_niftyfmcglist.csv | FMCG |
+| ind_niftyitlist.csv | IT |
+| ind_niftymetallist.csv | METALS |
+| ind_niftyrealtylist.csv | REALTY |
+| ind_niftyhealthcarelist.csv | HEALTHCARE |
+| ind_niftyoilgaslist.csv | ENERGY |
+| ind_niftypsubankinglist.csv | PSU BANK |
+| ind_niftyprivatebankinglist.csv | PVT BANK |
+| ind_niftyfinancialserviceslist.csv | FINANCE |
+        """)
+
+    if not _sl_folder:
+        st.stop()
+
+    # ── Load CSVs from folder ─────────────────────────────
+    _sl_sector_stocks, _sl_errors = _sl_load_sector_csvs(_sl_folder)
+
+    # Show errors if any
+    for _err in _sl_errors:
+        st.warning(_err)
+
+    if not _sl_sector_stocks:
+        st.error(
+            "❌ No valid sector CSVs found in folder. "
+            f"Add NSE sector CSV files to:\n{_sl_folder}")
+        st.stop()
+
+    # ── Sector summary ────────────────────────────────────
+    _sl_total_stocks = sum(len(v) for v in _sl_sector_stocks.values())
+    st.success(
+        f"✅ {len(_sl_sector_stocks)} sectors loaded · "
+        f"{_sl_total_stocks} total stocks · "
+        f"Last refreshed: {__import__('datetime').datetime.now().strftime('%H:%M:%S')}")
+
+    # Show sector cards
+    _sl_sec_list = sorted(_sl_sector_stocks.keys())
+    _sl_card_cols = st.columns(min(len(_sl_sec_list), 6))
+    for _si, _sec in enumerate(_sl_sec_list):
+        with _sl_card_cols[_si % 6]:
+            st.markdown(
+                f"<div style='background:#1e293b;border-radius:8px;"
+                f"padding:8px;text-align:center;font-size:11px;margin-bottom:6px'>"
+                f"<div style='font-weight:700;color:#93c5fd'>{_sec}</div>"
+                f"<div style='color:#94a3b8'>{len(_sl_sector_stocks[_sec])} stocks</div>"
+                f"</div>",
+                unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    # ── Scanner controls ──────────────────────────────────
+    _sl_c1, _sl_c2, _sl_c3 = st.columns(3)
+    with _sl_c1:
+        _sl_scanner = st.selectbox(
+            "Scanner Type",
+            ["SMA Weekly", "Monthly Swing"],
+            key="sl_scanner_type")
+    with _sl_c2:
+        _sl_top_n = st.selectbox(
+            "Top N Sectors",
+            [1, 2, 3, 4, 5],
+            index=2,
+            key="sl_top_n")
+    with _sl_c3:
+        _sl_min_score = st.slider(
+            "Min Score", 50, 85, 60, 5,
+            key="sl_min_score")
+
+    _sl_c4, _sl_c5 = st.columns(2)
+    with _sl_c4:
+        _sl_capital = st.number_input(
+            "Capital per trade ₹",
+            min_value=10000, max_value=500000,
+            value=100000, step=10000,
+            key="sl_capital")
+    with _sl_c5:
+        _sl_risk_pct = st.slider(
+            "Risk %", 1.0, 3.0, 2.0, 0.5,
+            key="sl_risk_pct")
+
+    _sl_scanner_type = 'weekly' if 'Weekly' in _sl_scanner else 'monthly'
+
+    # RS formula display
+    if _sl_scanner_type == 'weekly':
+        _w1,_w2,_w3 = 0.50,0.30,0.20
+        _p1,_p2,_p3 = 20,10,5
+        _l1,_l2,_l3 = '1M','2W','1W'
+        _formula = "1M×50% + 2W×30% + 1W×20%"
+    else:
+        _w1,_w2,_w3 = 0.50,0.30,0.20
+        _p1,_p2,_p3 = 60,20,10
+        _l1,_l2,_l3 = '3M','1M','2W'
+        _formula = "3M×50% + 1M×30% + 2W×20%"
+
+    st.markdown(
+        f"<div style='background:#1e293b;border:1px solid #334155;"
+        f"border-radius:8px;padding:8px 14px;font-size:11px;"
+        f"color:#94a3b8;margin-bottom:12px'>"
+        f"📐 <b>Weighted RS Formula ({_sl_scanner}):</b> {_formula}"
+        f"</div>",
+        unsafe_allow_html=True)
+
+    _sl_run = st.button(
+        "🏆 Rank Sectors + Scan Best Stocks",
+        type="primary",
+        use_container_width=True)
+
+    if _sl_run:
+        _sl_prog   = st.progress(0, "🔍 Starting...")
+        _sl_status = st.empty()
+
+        # ══════════════════════════════════════════════
+        # PHASE 1 — Nifty base returns
+        # ══════════════════════════════════════════════
+        _sl_status.info("📊 Phase 1 — Fetching Nifty base returns...")
+        _sl_nf_r1=_sl_nf_r2=_sl_nf_r3=0.0
+        _sl_nf_df=None
+        try:
+            _sl_nf_raw = yf.Ticker('^NSEI').history(
+                period='6mo',interval='1d',
+                auto_adjust=True,actions=False)
+            _sl_nf_raw.columns=[c.split(' ')[0] if ' ' in str(c) else c for c in _sl_nf_raw.columns]
+            _sl_nf_raw=_sl_nf_raw[['Close']].dropna()
+            _sl_nf_df=_sl_nf_raw.copy()
+            if len(_sl_nf_raw)>=_p1: _sl_nf_r1=float((_sl_nf_raw['Close'].iloc[-1]-_sl_nf_raw['Close'].iloc[-_p1])/_sl_nf_raw['Close'].iloc[-_p1]*100)
+            if len(_sl_nf_raw)>=_p2: _sl_nf_r2=float((_sl_nf_raw['Close'].iloc[-1]-_sl_nf_raw['Close'].iloc[-_p2])/_sl_nf_raw['Close'].iloc[-_p2]*100)
+            if len(_sl_nf_raw)>=_p3: _sl_nf_r3=float((_sl_nf_raw['Close'].iloc[-1]-_sl_nf_raw['Close'].iloc[-_p3])/_sl_nf_raw['Close'].iloc[-_p3]*100)
+        except Exception: pass
+
+        # ══════════════════════════════════════════════
+        # PHASE 2 — Rank sectors
+        # ══════════════════════════════════════════════
+        _sl_status.info("📊 Phase 2 — Ranking sectors by weighted RS...")
+        _sl_sec_scores={}; _sl_sec_detail={}; _sl_sec_bull={}
+        _total_secs2=len(_sl_sector_stocks)
+
+        for _si2,(_sec2,_syms2) in enumerate(_sl_sector_stocks.items()):
+            _sl_prog.progress(int(_si2/_total_secs2*30),f"📊 {_sec2}...")
+            _r1l=[];_r2l=[];_r3l=[];_bull=0
+            for _ss in _syms2[:8]:  # use first 8 stocks as proxy
+                try:
+                    _ss_df=yf.Ticker(_ss+'.NS').history(
+                        period='6mo',interval='1d',
+                        auto_adjust=True,actions=False)
+                    if _ss_df is None or len(_ss_df)<_p3+2: continue
+                    _ss_df.columns=[c.split(' ')[0] if ' ' in str(c) else c for c in _ss_df.columns]
+                    _ss_df=_ss_df[['Close']].dropna()
+                    if len(_ss_df)>=_p1: _r1l.append(float((_ss_df['Close'].iloc[-1]-_ss_df['Close'].iloc[-_p1])/_ss_df['Close'].iloc[-_p1]*100)-_sl_nf_r1)
+                    if len(_ss_df)>=_p2: _r2l.append(float((_ss_df['Close'].iloc[-1]-_ss_df['Close'].iloc[-_p2])/_ss_df['Close'].iloc[-_p2]*100)-_sl_nf_r2)
+                    if len(_ss_df)>=_p3: _r3l.append(float((_ss_df['Close'].iloc[-1]-_ss_df['Close'].iloc[-_p3])/_ss_df['Close'].iloc[-_p3]*100)-_sl_nf_r3)
+                    _ss_df['SMA20']=_ss_df['Close'].rolling(20).mean()
+                    _ss_df['SMA50']=_ss_df['Close'].rolling(50).mean()
+                    _ss_df=_ss_df.dropna()
+                    if len(_ss_df)>0 and float(_ss_df['Close'].iloc[-1])>float(_ss_df['SMA20'].iloc[-1])>float(_ss_df['SMA50'].iloc[-1]): _bull+=1
+                except Exception: continue
+            _a1=sum(_r1l)/len(_r1l) if _r1l else 0
+            _a2=sum(_r2l)/len(_r2l) if _r2l else 0
+            _a3=sum(_r3l)/len(_r3l) if _r3l else 0
+            _wt=round(_w1*_a1+_w2*_a2+_w3*_a3,2)
+            _sl_sec_scores[_sec2]=_wt
+            _sl_sec_detail[_sec2]={'r1':round(_a1,1),'r2':round(_a2,1),'r3':round(_a3,1),'wt':_wt}
+            _sl_sec_bull[_sec2]=_bull
+
+        _sl_ranked=sorted(_sl_sec_scores.items(),key=lambda x:x[1],reverse=True)
+        _sl_top_secs=[s for s,_ in _sl_ranked[:_sl_top_n]]
+        _sl_prog.progress(33,f"✅ Top {_sl_top_n}: {', '.join(_sl_top_secs)}")
+
+        # ── Show sector ranking ───────────────────────
+        st.markdown("---")
+        st.markdown(f"### 📊 Sector Rankings — {_formula}")
+
+        _rank_cols=st.columns(min(len(_sl_ranked),5))
+        for _ri,(_rsec,_rsc) in enumerate(_sl_ranked[:10]):
+            with _rank_cols[_ri%5]:
+                _it  =_rsec in _sl_top_secs
+                _rbg ='#0c1f12' if _it else '#1e293b'
+                _rbdr='#16a34a' if _it else '#334155'
+                _rclr='#34d399' if _rsc>=0 else '#f87171'
+                _ric ='🥇' if _ri==0 else '🥈' if _ri==1 else '🥉' if _ri==2 else f'#{_ri+1}'
+                _det =_sl_sec_detail.get(_rsec,{})
+                _ns  =len(_sl_sector_stocks.get(_rsec,[]))
+                st.markdown(
+                    f"<div style='background:{_rbg};border:1.5px solid {_rbdr};"
+                    f"border-radius:10px;padding:12px;text-align:center;margin-bottom:8px'>"
+                    f"<div style='font-size:11px;font-weight:700;color:#94a3b8'>"
+                    f"{_ric} {_rsec}{'  ✅' if _it else ''}</div>"
+                    f"<div style='font-size:22px;font-weight:800;color:{_rclr}'>"
+                    f"{'+' if _rsc>=0 else ''}{_rsc:.1f}</div>"
+                    f"<div style='font-size:9px;color:#64748b'>Weighted RS vs Nifty</div>"
+                    f"<div style='font-size:9px;color:#475569;margin-top:3px'>"
+                    f"{_l1}:{'+' if _det.get('r1',0)>=0 else ''}{_det.get('r1',0):.1f}% · "
+                    f"{_l2}:{'+' if _det.get('r2',0)>=0 else ''}{_det.get('r2',0):.1f}% · "
+                    f"{_l3}:{'+' if _det.get('r3',0)>=0 else ''}{_det.get('r3',0):.1f}%</div>"
+                    f"<div style='font-size:9px;color:#64748b;margin-top:2px'>"
+                    f"{_sl_sec_bull.get(_rsec,0)} bullish · {_ns} stocks</div>"
+                    f"</div>",
+                    unsafe_allow_html=True)
+
+        # ══════════════════════════════════════════════
+        # PHASE 3 — Scan top sector stocks
+        # ══════════════════════════════════════════════
+        _sl_scan_list=[]; _sl_stock_sec={}
+        for _ts in _sl_top_secs:
+            for _stk in _sl_sector_stocks.get(_ts,[]):
+                if _stk not in _sl_scan_list:
+                    _sl_scan_list.append(_stk)
+                    _sl_stock_sec[_stk]=_ts
+
+        st.markdown("---")
+        st.markdown(
+            f"### 🔍 Scanning {len(_sl_scan_list)} stocks from "
+            +' · '.join([f'**{s}**' for s in _sl_top_secs]))
+
+        # Nifty swing state
+        _sl_int ='1wk' if _sl_scanner_type=='monthly' else '1d'
+        _sl_per2='2y'  if _sl_scanner_type=='monthly' else '1y'
+        _sl_nf2=None; _sl_sw={'state':'UNKNOWN'}
+        try:
+            _sl_nf2t=yf.Ticker('^NSEI').history(period=_sl_per2,interval=_sl_int,auto_adjust=True,actions=False)
+            _sl_nf2t.columns=[c.split(' ')[0] if ' ' in str(c) else c for c in _sl_nf2t.columns]
+            _sl_nf2t['SMA20']=_sl_nf2t['Close'].rolling(20).mean()
+            _sl_nf2t['SMA50']=_sl_nf2t['Close'].rolling(50).mean()
+            _sl_nf2t=_sl_nf2t.dropna(); _sl_nf2=_sl_nf2t.copy()
+            _nc=float(_sl_nf2t['Close'].iloc[-1]); _ns20=float(_sl_nf2t['SMA20'].iloc[-1]); _ns50=float(_sl_nf2t['SMA50'].iloc[-1])
+            if   _nc>_ns20>_ns50: _sl_sw['state']='BULLISH'
+            elif _nc>_ns20:       _sl_sw['state']='CAUTION'
+            else:                 _sl_sw['state']='BEARISH'
+            _sl_sw['sma20']=round(_ns20,2); _sl_sw['close']=round(_nc,2)
+        except Exception: pass
+
+        _sl_ns=_sl_sw.get('state','UNKNOWN')
+        _sl_nc_clr={'BULLISH':'#15803d','CAUTION':'#d97706','BEARISH':'#dc2626','UNKNOWN':'#64748b'}.get(_sl_ns,'#64748b')
+        _sl_nc_ico={'BULLISH':'✅','CAUTION':'⚠️','BEARISH':'🔴','UNKNOWN':'❓'}.get(_sl_ns,'❓')
+        st.markdown(
+            f"<div style='background:{_sl_nc_clr}22;border:1px solid {_sl_nc_clr}44;"
+            f"border-radius:8px;padding:8px 14px;margin-bottom:12px;"
+            f"font-size:11px;font-weight:700;color:{_sl_nc_clr}'>"
+            f"{_sl_nc_ico} Nifty: {_sl_ns} · "
+            f"{'High beta rewarded' if _sl_ns=='BULLISH' else 'Defensive preferred' if _sl_ns=='BEARISH' else 'Mixed'}"
+            f"</div>",
+            unsafe_allow_html=True)
+
+        # Scan each stock
+        _sl_results=[]; _sl_total3=len(_sl_scan_list)
+        _sl_pstep=0.01 if _sl_scanner_type=='monthly' else 0.02
+        _sl_pmax =0.10 if _sl_scanner_type=='monthly' else 0.20
+        _sl_status.info(f"🔍 Phase 3 — Scanning {_sl_total3} stocks from top {_sl_top_n} sectors...")
+
+        for _sli,_sl_sym in enumerate(_sl_scan_list):
+            _sl_prog.progress(35+int(_sli/_sl_total3*60),f"🔍 {_sl_sym} ({_sli+1}/{_sl_total3})...")
+            try:
+                _sl_df=yf.Ticker(_sl_sym+'.NS').history(period=_sl_per2,interval=_sl_int,auto_adjust=True,actions=False)
+                if _sl_df is None or len(_sl_df)<30: continue
+                _sl_df.columns=[c.split(' ')[0] if ' ' in str(c) else c for c in _sl_df.columns]
+                _sl_df['SMA20']=_sl_df['Close'].rolling(20).mean()
+                _sl_df['SMA50']=_sl_df['Close'].rolling(50).mean()
+                _sl_df['VolMA']=_sl_df['Volume'].rolling(20).mean()
+                _sl_df=_sl_df.dropna()
+                if len(_sl_df)<10: continue
+                close=float(_sl_df['Close'].iloc[-1]); sma20=float(_sl_df['SMA20'].iloc[-1]); sma50=float(_sl_df['SMA50'].iloc[-1])
+                vol=float(_sl_df['Volume'].iloc[-1]); volma=float(_sl_df['VolMA'].iloc[-1])
+                atr=float(_sl_df['High'].iloc[-8:-1].max()-_sl_df['Low'].iloc[-8:-1].min())/7 if len(_sl_df)>=8 else close*0.03
+                if close<=0 or sma20<=0 or sma50<=0: continue
+                if sma20<=sma50 or close<=sma20: continue
+                sma20_prev=float(_sl_df['SMA20'].iloc[-6]) if len(_sl_df)>=6 else sma20
+                slope=(sma20-sma20_prev)/sma20_prev*100 if sma20_prev>0 else 0
+                if slope<=0: continue
+                pct_above=(close-sma20)/sma20*100; vol_ratio=vol/volma if volma>0 else 1.0
+                # RS
+                _sl_rs=1.0
+                if _sl_nf2 is not None and len(_sl_nf2)>=5:
+                    try:
+                        _sr=float((_sl_df['Close'].iloc[-1]-_sl_df['Close'].iloc[-5])/_sl_df['Close'].iloc[-5]*100)
+                        _nr=float((_sl_nf2['Close'].iloc[-1]-_sl_nf2['Close'].iloc[-5])/_sl_nf2['Close'].iloc[-5]*100)
+                        _sl_rs=(_sr+100)/(_nr+100) if (_nr+100)>0 else 1.0
+                    except: pass
+                if _sl_rs<0.95: continue
+                # Signal
+                _has_cross=False; _has_pb=False; _cross_age=99; _pb_age=0
+                _lb=3 if _sl_scanner_type=='monthly' else 5
+                for _k in range(1,_lb+1):
+                    if _k+1>=len(_sl_df): break
+                    if float(_sl_df['SMA20'].iloc[-_k-1])<=float(_sl_df['SMA50'].iloc[-_k-1]) and float(_sl_df['SMA20'].iloc[-_k])>float(_sl_df['SMA50'].iloc[-_k]):
+                        _has_cross=True; _cross_age=_k; break
+                _tb=0
+                for _k in range(1,min(20,len(_sl_df))):
+                    if float(_sl_df['SMA20'].iloc[-_k])>float(_sl_df['SMA50'].iloc[-_k]): _tb+=1
+                    else: break
+                if _tb>=4:
+                    for _k in range(1,4):
+                        if _k>=len(_sl_df): break
+                        if abs(float(_sl_df['Low'].iloc[-_k])-float(_sl_df['SMA20'].iloc[-_k]))/float(_sl_df['SMA20'].iloc[-_k])*100<=2.0 or float(_sl_df['Low'].iloc[-_k])<=float(_sl_df['SMA20'].iloc[-_k]):
+                            _has_pb=True; _pb_age=_k; break
+                if not _has_cross and not _has_pb: continue
+                # Beta
+                _sl_beta=1.0; _sl_beta_sc=0
+                if _sl_nf2 is not None:
+                    try: _sl_beta=calc_stock_beta(_sl_df,_sl_nf2,52); _sl_beta_sc,_,_=get_beta_score(_sl_beta,_sl_sw)
+                    except: pass
+                # PSAR
+                _sl_psar_b=False; _sl_psar_v=0.0
+                try:
+                    _ps=calc_psar(_sl_df.copy(),step=_sl_pstep,max_af=_sl_pmax)
+                    _sl_psar_v=round(float(_ps['PSAR'].iloc[-1]),2); _sl_psar_b=close>_sl_psar_v
+                except: pass
+                # Score
+                _sc=0
+                _cb=(25 if _cross_age==1 else 18 if _cross_age==2 else 12) if _has_cross else 0
+                _pb2=(22 if _pb_age==1 else 16) if _has_pb else 0
+                _sc+=max(_cb,_pb2)
+                _sc+=(20 if pct_above<=1 else 15 if pct_above<=2 else 10 if pct_above<=3 else 5)
+                _sc+=(10 if _tb>=12 else 7 if _tb>=6 else 4)
+                _sc+=(8 if vol_ratio>=1.5 else 4 if vol_ratio>=1.0 else 0)
+                _sc+=(8 if _sl_rs>=1.05 else 4 if _sl_rs>=1.0 else 0)
+                _sc+=(20 if _sl_psar_b else 0); _sc+=_sl_beta_sc
+                if _sc<_sl_min_score: continue
+                _entry='ENTER NOW' if pct_above<=2.0 else 'ACCEPTABLE'
+                _entry_clr='#15803d' if _entry=='ENTER NOW' else '#d97706'
+                _sl_price=round(sma20*0.97,2); _risk_d=close-_sl_price
+                if _risk_d<=0: continue
+                _qty=max(1,int((_sl_capital*_sl_risk_pct/100)/_risk_d))
+                _t1=round(close+1*atr,2); _t2=round(close+2*atr,2); _rr=round((_t2-close)/_risk_d,1)
+                _unit='wk' if _sl_scanner_type=='monthly' else 'd'
+                _sig=f"🔀 Cross {_cross_age}{_unit} ago" if _has_cross else f"📉 Pullback {_pb_age}{_unit} ago"
+                _btg,_btc,_btbg,_btbdr,_btic=get_beta_grade(_sl_beta)
+                _btss=f"+{_sl_beta_sc}" if _sl_beta_sc>0 else str(_sl_beta_sc)
+                _sl_results.append({
+                    'symbol':_sl_sym,'sector':_sl_stock_sec.get(_sl_sym,''),
+                    'sec_rs':_sl_sec_scores.get(_sl_stock_sec.get(_sl_sym,''),0),
+                    'close':round(close,2),'sma20':round(sma20,2),'pct_above':round(pct_above,2),
+                    'score':_sc,'signal':_sig,'entry':_entry,'entry_clr':_entry_clr,
+                    'sl':_sl_price,'t1':_t1,'t2':_t2,'rr':_rr,'qty':_qty,
+                    'invest':round(_qty*close,0),'psar_bull':_sl_psar_b,'psar_val':_sl_psar_v,
+                    'vol_ratio':round(vol_ratio,2),'rs':round(_sl_rs,3),
+                    'beta':round(_sl_beta,2),'btg':_btg,'btc':_btc,'btbg':_btbg,
+                    'btbdr':_btbdr,'btic':_btic,'btss':_btss,'trend_bars':_tb,
+                })
+            except Exception: continue
+
+        _sl_prog.progress(100,f"✅ Done — {len(_sl_results)} signals found")
+        _sl_status.empty()
+
+        # ══════════════════════════════════════════════
+        # PHASE 4 — Show results
+        # ══════════════════════════════════════════════
+        st.markdown("---")
+        st.markdown(f"### 🎯 {len(_sl_results)} Stocks Found in Top {_sl_top_n} Sectors")
+
+        if not _sl_results:
+            st.warning("⚠️ No stocks passed filters. Try lowering min score.")
+        else:
+            import pandas as _sl_pd2
+            _sl_results=sorted(_sl_results,key=lambda x:x['score'],reverse=True)
+            _sl_by_sec={}
+            for _r in _sl_results: _sl_by_sec.setdefault(_r['sector'],[]).append(_r)
+
+            for _ts in _sl_top_secs:
+                _ts_res=_sl_by_sec.get(_ts,[])
+                if not _ts_res: continue
+                _ts_sc=_sl_sec_scores.get(_ts,0)
+                _ts_ri=next((i for i,(s,_) in enumerate(_sl_ranked) if s==_ts),0)
+                _ts_ic='🥇' if _ts_ri==0 else '🥈' if _ts_ri==1 else '🥉'
+                _ts_clr='#34d399' if _ts_sc>=0 else '#f87171'
+                _ts_det=_sl_sec_detail.get(_ts,{})
+                st.markdown(
+                    f"<div style='background:#0c1f12;border:1.5px solid #16a34a;"
+                    f"border-radius:10px;padding:12px 18px;margin:16px 0 8px'>"
+                    f"<span style='font-size:15px;font-weight:800;color:#34d399'>"
+                    f"{_ts_ic} Rank #{_ts_ri+1} — {_ts}</span>"
+                    f"<span style='font-size:12px;font-weight:700;color:{_ts_clr};margin-left:14px'>"
+                    f"RS: {'+' if _ts_sc>=0 else ''}{_ts_sc:.1f}</span>"
+                    f"<span style='font-size:10px;color:#64748b;margin-left:14px'>"
+                    f"{_l1}:{'+' if _ts_det.get('r1',0)>=0 else ''}{_ts_det.get('r1',0):.1f}% · "
+                    f"{_l2}:{'+' if _ts_det.get('r2',0)>=0 else ''}{_ts_det.get('r2',0):.1f}% · "
+                    f"{_l3}:{'+' if _ts_det.get('r3',0)>=0 else ''}{_ts_det.get('r3',0):.1f}%</span>"
+                    f"<span style='font-size:10px;color:#64748b;margin-left:14px'>"
+                    f"{len(_ts_res)} passing · {len(_sl_sector_stocks.get(_ts,[]))} total</span>"
+                    f"</div>",
+                    unsafe_allow_html=True)
+
+                for _r in _ts_res:
+                    _sc2=_r['score']
+                    _sc_clr='#15803d' if _sc2>=75 else '#16a34a' if _sc2>=60 else '#d97706'
+                    _sc_bg='#f0fdf4' if _sc2>=75 else '#dcfce7' if _sc2>=60 else '#fffbeb'
+                    _sc_lbl='🔥 CONFIDENT BUY' if _sc2>=130 else '✅ STRONG' if _sc2>=100 else '👍 GOOD' if _sc2>=75 else '⚠️ WEAK'
+                    st.markdown(
+                        f"<div style='background:#111827;border:1px solid #1f2d45;"
+                        f"border-radius:12px;padding:14px 18px;margin-bottom:10px'>"
+                        f"<div style='display:flex;justify-content:space-between;align-items:center;"
+                        f"flex-wrap:wrap;gap:8px;margin-bottom:10px'>"
+                        f"<div><span style='font-size:20px;font-weight:800;color:#f1f5f9'>{_r['symbol']}</span>"
+                        f"<span style='font-size:12px;color:#64748b;margin-left:8px'>₹{_r['close']:,.2f}</span></div>"
+                        f"<div style='display:flex;gap:6px;flex-wrap:wrap'>"
+                        f"<span style='background:{_sc_bg};color:{_sc_clr};font-size:11px;font-weight:700;"
+                        f"border-radius:6px;padding:3px 10px'>{_sc_lbl} {_sc2}/100</span>"
+                        f"<span style='background:{'#f0fdf4' if _r['entry']=='ENTER NOW' else '#fffbeb'};"
+                        f"color:{_r['entry_clr']};font-size:11px;font-weight:700;border-radius:6px;padding:3px 10px'>"
+                        f"{'🟢' if _r['entry']=='ENTER NOW' else '🟡'} {_r['entry']}</span>"
+                        f"<span style='background:{'#eff6ff' if _r['psar_bull'] else '#fef2f2'};"
+                        f"color:{'#1d4ed8' if _r['psar_bull'] else '#dc2626'};font-size:11px;"
+                        f"font-weight:700;border-radius:6px;padding:3px 10px'>"
+                        f"{'✅' if _r['psar_bull'] else '❌'} PSAR ₹{_r['psar_val']:,.2f}</span>"
+                        f"<span style='background:{_r['btbg']};color:{_r['btc']};font-size:10px;"
+                        f"font-weight:700;border-radius:6px;padding:3px 8px;border:1px solid {_r['btbdr']}'>"
+                        f"{_r['btic']} β{_r['beta']:.2f} {_r['btg']} ({_r['btss']})</span>"
+                        f"</div></div>"
+                        f"<div style='display:flex;gap:14px;flex-wrap:wrap;font-size:11px;"
+                        f"color:#94a3b8;margin-bottom:10px'>"
+                        f"<span>📡 {_r['signal']}</span>"
+                        f"<span>SMA20 ₹{_r['sma20']:,.2f} (+{_r['pct_above']:.1f}%)</span>"
+                        f"<span>Vol {_r['vol_ratio']:.1f}×</span><span>RS {_r['rs']:.3f}</span>"
+                        f"<span>Trend {_r['trend_bars']}{'wk' if _sl_scanner_type=='monthly' else 'd'}</span>"
+                        f"</div>"
+                        f"<div style='display:flex;gap:12px;flex-wrap:wrap;font-size:11px;"
+                        f"background:#0f172a;border-radius:8px;padding:8px 12px'>"
+                        f"<span>🔴 SL <b>₹{_r['sl']:,.2f}</b></span>"
+                        f"<span>🎯 T1 <b>₹{_r['t1']:,.2f}</b></span>"
+                        f"<span>🎯 T2 <b>₹{_r['t2']:,.2f}</b></span>"
+                        f"<span>R:R <b>{_r['rr']}:1</b></span>"
+                        f"<span>Qty <b>{_r['qty']}</b></span>"
+                        f"<span>Invest <b>₹{_r['invest']:,.0f}</b></span>"
+                        f"</div></div>",
+                        unsafe_allow_html=True)
+
+            _sl_csv=_sl_pd2.DataFrame(_sl_results).to_csv(index=False)
+            st.download_button(
+                f"⬇️ Download {len(_sl_results)} Sector Leader Signals",
+                _sl_csv,
+                f"sector_leaders_{_sl_scanner.replace(' ','_')}.csv",
+                "text/csv", use_container_width=True)
