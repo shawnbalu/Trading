@@ -2799,28 +2799,38 @@ def get_beta_grade(beta):
 # ─────────────────────────────────────────────────────────────
 
 SECTOR_ETF_UNIFIED = {
-    'BANK':        '^NSEBANK',    # Nifty Bank       ✅ ETF available
-    'IT':          '^CNXIT',      # Nifty IT          ✅ ETF available
-    'AUTO':        '^CNXAUTO',    # Nifty Auto        ✅ ETF available
-    'PHARMA':      '^CNXPHARMA',  # Nifty Pharma      ✅ ETF available
-    'FMCG':        '^CNXFMCG',    # Nifty FMCG        ✅ ETF available
-    'METALS':      '^CNXMETAL',   # Nifty Metal       ✅ ETF available
-    'ENERGY':      '^CNXENERGY',  # Nifty Energy      ✅ ETF available
-    'REALTY':      '^CNXREALTY',  # Nifty Realty      ✅ ETF available
-    'INFRA':       '^CNXINFRA',   # Nifty Infra       ✅ ETF available
-    'FINANCE':     '^CNXFIN',     # Nifty Fin Svc     ✅ ETF available
-    'MEDIA':       '^CNXMEDIA',   # Nifty Media       ✅ ETF available
-    # ── PROXY sectors (no yfinance ETF) ──────────────────
-    'HEALTHCARE':  'PROXY',       # Hospitals — no ETF
-    'PSU_BANK':    'PROXY',       # PSU banks — no ETF
-    'PVT_BANK':    'PROXY',       # Private banks — no ETF
-    'CHEMICALS':   'PROXY',       # Specialty chemicals — no ETF
-    'DEFENCE':     'PROXY',       # Defence — no dedicated ETF
-    'CONSUMPTION': 'PROXY',       # Consumer durables/discretionary
-    'TELECOM':     'PROXY',       # Telecom — no ETF
-    'TEXTILES':    'PROXY',       # Textiles — no NSE sectoral index
-    'AGRI':        'PROXY',       # Agri/Fertilisers — no ETF
-    'LOGISTICS':   'PROXY',       # Logistics/Supply chain — no ETF
+    'BANK':        '^NSEBANK',           # Nifty Bank        ✅ verified working (10 bars)
+    'IT':          '^CNXIT',             # Nifty IT          ✅ verified working (10 bars)
+    'AUTO':        '^CNXAUTO',           # Nifty Auto        ✅ verified working (5 bars)
+    'PHARMA':      '^CNXPHARMA',         # Nifty Pharma      ✅ verified working (10 bars)
+    'FMCG':        '^CNXFMCG',           # Nifty FMCG        ✅ verified working (5 bars)
+    'METALS':      '^CNXMETAL',          # Nifty Metal       ✅ verified working (5 bars)
+    'ENERGY':      '^CNXENERGY',         # Nifty Energy      ✅ verified working (5 bars)
+    'REALTY':      '^CNXREALTY',         # Nifty Realty      ✅ verified working (5 bars)
+    'INFRA':       '^CNXINFRA',          # Nifty Infra       ✅ verified working (5 bars)
+    'MEDIA':       '^CNXMEDIA',          # Nifty Media       ✅ verified working (5 bars)
+    # FIXED 20-Jun-2026: '^CNXFIN' was DEAD on Yahoo (confirmed via
+    # live test — control check failed, 0 bars returned). Sector
+    # ranking for FINANCE had been silently falling back to neutral
+    # defaults (0.0 RS, bullish=True) for an unknown period before
+    # this was caught. Replaced with verified-working alternate.
+    'FINANCE':     'NIFTY_FIN_SERVICE.NS',  # Nifty Fin Service ✅ verified working (5 bars) — replaces dead ^CNXFIN
+    # UPGRADED 20-Jun-2026: confirmed real index data exists —
+    # moved off PROXY (stock-average) onto actual ETF data
+    'PSU_BANK':    '^CNXPSUBANK',        # Nifty PSU Bank    ✅ verified working (5 bars)
+    'PVT_BANK':    'NIFTY_PVT_BANK.NS',  # Nifty Pvt Bank    ✅ verified working (5 bars)
+    'CONSUMPTION': '^CNXCONSUM',         # Nifty Consumption ✅ verified working (5 bars)
+    # ── Still PROXY (no working yfinance ticker found after 2 rounds
+    #    of testing — 6 candidates each tried for HEALTHCARE, CHEMICALS,
+    #    TELECOM, DEFENCE) ─────────────────────────────────────────
+    'HEALTHCARE':  'PROXY',       # Hospitals — tried 4 candidates, none worked
+    'CHEMICALS':   'PROXY',       # Specialty chemicals — tried 3 candidates, none worked
+    'DEFENCE':     'PROXY',       # Defence — tried 3 candidates, none worked
+    'TELECOM':     'PROXY',       # Telecom — ^CNXSERVICE rejected (only 3.85% telecom
+                                   # weight, 57.7% Financial Services — would mislead)
+    'TEXTILES':    'PROXY',       # Textiles — no NSE sectoral index exists
+    'AGRI':        'PROXY',       # Agri/Fertilisers — no NSE sectoral index exists
+    'LOGISTICS':   'PROXY',       # Logistics/Supply chain — no NSE sectoral index exists
 }
 
 # ── Proxy stocks for sectors without yfinance ETF ─────────────
@@ -16277,7 +16287,7 @@ SECTOR_ETF_TICKERS = {
     'ENERGY':     '^CNXENERGY',
     'REALTY':     '^CNXREALTY',
     'INFRA':      '^CNXINFRA',
-    'FINANCE':    '^CNXFIN',
+    'FINANCE':    'NIFTY_FIN_SERVICE.NS',  # FIXED 20-Jun-2026: old ^CNXFIN was dead on Yahoo
     'PSU_BANK':   '^CNXPSUBANK',
     'MEDIA':      '^CNXMEDIA',
     'CONSUMER':   '^CNXCONSUM',
