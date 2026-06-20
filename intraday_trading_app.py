@@ -1219,6 +1219,96 @@ FNO_STOCKS = {
     'ZYDUSLIFE','360ONE','ASTRAL','AARVIIND','CESC',
 }
 
+# ─────────────────────────────────────────────────────────────
+#  DYNAMIC F&O LIST — overrides FNO_STOCKS if user uploads a CSV
+#  Saved to disk so it persists across app restarts.
+#  Falls back to the hardcoded FNO_STOCKS above if no upload yet.
+# ─────────────────────────────────────────────────────────────
+import os as _os_fno
+_FNO_CUSTOM_PATH = _os_fno.path.join(
+    _os_fno.path.dirname(_os_fno.path.abspath(__file__)),
+    'fno_stocks_custom.csv')
+
+
+def load_custom_fno_list():
+    """
+    Loads the F&O symbol set to use this session.
+    Priority:
+      1. Already cached in session_state (avoid re-reading disk)
+      2. Saved custom CSV on disk (from a previous upload)
+      3. Hardcoded FNO_STOCKS (built-in default)
+
+    Returns: (set_of_symbols, source_label)
+    """
+    import streamlit as _st_fno
+    if 'fno_stocks_active' in _st_fno.session_state:
+        return (_st_fno.session_state['fno_stocks_active'],
+                _st_fno.session_state.get('fno_stocks_source', 'built-in'))
+
+    if _os_fno.path.exists(_FNO_CUSTOM_PATH):
+        try:
+            import pandas as _pd_fno
+            _df = _pd_fno.read_csv(_FNO_CUSTOM_PATH)
+            _cols_lower = {c.lower().strip(): c for c in _df.columns}
+            _sym_col = _cols_lower.get('symbol', _df.columns[0])
+            _raw = _df[_sym_col].dropna().astype(str).tolist()
+            _clean = set()
+            for _s in _raw:
+                _s = _s.strip().upper().replace('.NS', '').replace('NSE:', '')
+                if _s and _s not in ('SYMBOL', 'SYMBOLS'):
+                    _clean.add(_s)
+            if _clean:
+                _st_fno.session_state['fno_stocks_active'] = _clean
+                _st_fno.session_state['fno_stocks_source'] = 'custom CSV (saved)'
+                return _clean, 'custom CSV (saved)'
+        except Exception:
+            pass
+
+    _st_fno.session_state['fno_stocks_active'] = FNO_STOCKS
+    _st_fno.session_state['fno_stocks_source'] = 'built-in'
+    return FNO_STOCKS, 'built-in'
+
+
+def save_custom_fno_list(uploaded_file):
+    """
+    Saves an uploaded F&O CSV to disk (persists across restarts)
+    and updates the active session list immediately.
+
+    Returns: (success: bool, message: str, count: int)
+    """
+    import streamlit as _st_fno
+    try:
+        _symbols, _err = parse_csv_stock_list(uploaded_file)
+        if _err:
+            return False, _err, 0
+        # Strip .NS suffix for storage (FNO_STOCKS format has no suffix)
+        _clean = {s.replace('.NS', '') for s in _symbols}
+
+        # Save to disk as simple CSV for persistence
+        import pandas as _pd_fno
+        _pd_fno.DataFrame({'Symbol': sorted(_clean)}).to_csv(
+            _FNO_CUSTOM_PATH, index=False)
+
+        # Update active session immediately
+        _st_fno.session_state['fno_stocks_active'] = _clean
+        _st_fno.session_state['fno_stocks_source'] = 'custom CSV (saved)'
+        return True, f"Saved {len(_clean)} F&O symbols", len(_clean)
+    except Exception as _e:
+        return False, f"Could not save: {str(_e)[:100]}", 0
+
+
+def reset_fno_list_to_default():
+    """Removes custom F&O list — reverts to built-in FNO_STOCKS."""
+    import streamlit as _st_fno
+    try:
+        if _os_fno.path.exists(_FNO_CUSTOM_PATH):
+            _os_fno.remove(_FNO_CUSTOM_PATH)
+    except Exception:
+        pass
+    _st_fno.session_state['fno_stocks_active'] = FNO_STOCKS
+    _st_fno.session_state['fno_stocks_source'] = 'built-in'
+
+
 def get_monthly_expiry(dt=None):
     """
     Returns the last Thursday of the current/next month.
@@ -1292,7 +1382,8 @@ def get_fno_info(sym_clean, dte=None):
     if dte is None:
         dte = days_to_expiry()
 
-    is_fno = sym_clean.upper() in FNO_STOCKS
+    _fno_set, _ = load_custom_fno_list()
+    is_fno = sym_clean.upper() in _fno_set
     zone   = get_expiry_zone(dte)
 
     # ── Penalty / Bonus ───────────────────────────
@@ -2889,6 +2980,67 @@ def _get_proxy_sector_data(proxy_stocks, period='6mo'):
     _synthetic = _pd3.DataFrame()
     _synthetic['Close'] = _combined.mean(axis=1)
     return _synthetic
+
+
+def parse_csv_stock_list(uploaded_file):
+    """
+    Parse an uploaded CSV/Excel of NSE symbols into a clean
+    list of '.NS' tickers for the scanner.
+
+    Supports common NSE export formats:
+      - 'Symbol' column (NSE sector/index lists)
+      - 'SYMBOL' column (some broker exports)
+      - First column fallback if no header matches
+
+    Returns: (symbols_list, error_message_or_None)
+    """
+    import pandas as _pd2
+    try:
+        _fname = uploaded_file.name.lower()
+        if _fname.endswith('.xlsx') or _fname.endswith('.xls'):
+            _df = _pd2.read_excel(uploaded_file)
+        else:
+            _df = _pd2.read_csv(uploaded_file)
+
+        if _df is None or len(_df) == 0:
+            return [], "File is empty"
+
+        # Find the symbol column — case-insensitive match
+        _cols_lower = {c.lower().strip(): c for c in _df.columns}
+        _sym_col = None
+        for _candidate in ['symbol', 'symbols', 'ticker', 'tickers',
+                            'stock', 'scrip', 'nse symbol', 'nse code']:
+            if _candidate in _cols_lower:
+                _sym_col = _cols_lower[_candidate]
+                break
+
+        if _sym_col is None:
+            # Fallback — use first column
+            _sym_col = _df.columns[0]
+
+        _raw = _df[_sym_col].dropna().astype(str).tolist()
+
+        # Clean symbols — remove .NS suffix if present, uppercase, strip
+        _clean = []
+        _seen  = set()
+        for _s in _raw:
+            _s = _s.strip().upper()
+            _s = _s.replace('.NS', '').replace('NSE:', '').strip()
+            if not _s or _s in _seen:
+                continue
+            # Skip header-like rows (e.g. "SYMBOL")
+            if _s in ('SYMBOL', 'SYMBOLS', 'TICKER', 'NSE CODE'):
+                continue
+            _seen.add(_s)
+            _clean.append(f'{_s}.NS')
+
+        if not _clean:
+            return [], "No valid symbols found in file"
+
+        return _clean, None
+
+    except Exception as _e:
+        return [], f"Could not read file: {str(_e)[:100]}"
 
 
 def get_unified_sector_rankings(formula='weekly'):
@@ -5897,6 +6049,34 @@ with st.sidebar:
     else:
         st.markdown("""<div style='padding:10px 12px;font-size:11px;color:#334155;text-align:center'>
             No alerts · Run scanner first</div>""", unsafe_allow_html=True)
+
+    # ── F&O Stocks List Management ────────────────────────
+    # NSE revises F&O list every ~6 months — keep it current
+    # without needing code changes each time
+    with st.expander("📋 F&O Stocks List"):
+        _fno_active_set, _fno_source = load_custom_fno_list()
+        st.caption(f"Active: **{len(_fno_active_set)} symbols** · Source: *{_fno_source}*")
+
+        _fno_upload = st.file_uploader(
+            "Upload updated F&O list (CSV/Excel)",
+            type=['csv', 'xlsx', 'xls'],
+            key="fno_list_upload",
+            help="Needs a 'Symbol' column — same format as the NSE "
+                 "F&O list or any broker's F&O export. "
+                 "Saved permanently until you upload a new one.")
+
+        if _fno_upload is not None:
+            _fno_ok, _fno_msg, _fno_count = save_custom_fno_list(_fno_upload)
+            if _fno_ok:
+                st.success(f"✅ {_fno_msg}")
+                st.rerun()
+            else:
+                st.error(f"❌ {_fno_msg}")
+
+        if _fno_source == 'custom CSV (saved)':
+            if st.button("↩️ Reset to built-in list", key="fno_reset_btn"):
+                reset_fno_list_to_default()
+                st.rerun()
 
     st.markdown("""
     <div class='sb-disclaimer'>
@@ -11122,15 +11302,40 @@ if _show_smaweekly:
             ["🔵 Largecap (Nifty 50)",
              "🟡 Midcap (Nifty Midcap 100)",
              "🟠 Smallcap",
-             "📊 Nifty 500 (All)"],
+             "📊 Nifty 500 (All)",
+             "📁 Upload My List"],
             horizontal=True, key="sw_universe",
-            help="Largecap = safer weekly trades. Midcap = higher returns.")
-        _sw_stocks = (
-            LARGECAP_STOCKS if _sw_universe == "🔵 Largecap (Nifty 50)"       else
-            MIDCAP_STOCKS   if _sw_universe == "🟡 Midcap (Nifty Midcap 100)" else
-            SMALLCAP_STOCKS if _sw_universe == "🟠 Smallcap"                  else
-            POPULAR_STOCKS
-        )
+            help="Largecap = safer weekly trades. Midcap = higher returns. "
+                 "Upload My List = scan your own CSV of NSE symbols.")
+
+        if _sw_universe == "📁 Upload My List":
+            _sw_csv_file = st.file_uploader(
+                "Upload CSV/Excel with NSE symbols",
+                type=['csv', 'xlsx', 'xls'],
+                key="sw_csv_upload",
+                help="Any NSE export works — needs a 'Symbol' column "
+                     "(or symbols in the first column). "
+                     "e.g. ind_niftyautolist.csv from NSE website, "
+                     "or your own watchlist export.")
+            if _sw_csv_file is not None:
+                _sw_csv_stocks, _sw_csv_err = parse_csv_stock_list(_sw_csv_file)
+                if _sw_csv_err:
+                    st.error(f"❌ {_sw_csv_err}")
+                    _sw_stocks = POPULAR_STOCKS
+                else:
+                    st.success(f"✅ Loaded {len(_sw_csv_stocks)} symbols from "
+                               f"{_sw_csv_file.name}")
+                    _sw_stocks = _sw_csv_stocks
+            else:
+                st.info("⬆️ Upload a file to scan your own stock list")
+                _sw_stocks = []
+        else:
+            _sw_stocks = (
+                LARGECAP_STOCKS if _sw_universe == "🔵 Largecap (Nifty 50)"       else
+                MIDCAP_STOCKS   if _sw_universe == "🟡 Midcap (Nifty Midcap 100)" else
+                SMALLCAP_STOCKS if _sw_universe == "🟠 Smallcap"                  else
+                POPULAR_STOCKS
+            )
         st.markdown(
             f"<div style='font-size:11px;color:#64748b;margin-top:-8px'>"
             f"⚡ {len(_sw_stocks)} stocks · Daily chart · SMA20 + SMA50</div>",
@@ -12151,25 +12356,28 @@ if _show_smaweekly:
         help="Scans daily chart for SMA20+SMA50 — fresh crosses AND pullback bounces")
 
     if _sw_run:
-        # Clear yfinance disk cache to force fresh data
-        try:
-            import yfinance as _yf_clear
-            _yf_clear.set_tz_cache_location(None)
-        except Exception:
-            pass
-        try:
-            import shutil, pathlib
-            _yf_cache = pathlib.Path.home() / '.cache' / 'py-yfinance'
-            if _yf_cache.exists():
-                shutil.rmtree(_yf_cache, ignore_errors=True)
-        except Exception:
-            pass
-        with st.spinner(f"📈 Scanning {len(_sw_stocks)} stocks on daily chart..."):
-            _sw_results = scan_sma_weekly(
-                _sw_stocks, _sw_capital, _sw_risk_pct, _sw_min_score, '')
-        st.session_state['sw_results']   = _sw_results
-        st.session_state['sw_scan_time'] = ist_now().strftime('%d %b %Y %H:%M IST')
-        st.rerun()
+        if not _sw_stocks:
+            st.warning("⚠️ No stocks to scan — upload a CSV file or pick a different universe above.")
+        else:
+            # Clear yfinance disk cache to force fresh data
+            try:
+                import yfinance as _yf_clear
+                _yf_clear.set_tz_cache_location(None)
+            except Exception:
+                pass
+            try:
+                import shutil, pathlib
+                _yf_cache = pathlib.Path.home() / '.cache' / 'py-yfinance'
+                if _yf_cache.exists():
+                    shutil.rmtree(_yf_cache, ignore_errors=True)
+            except Exception:
+                pass
+            with st.spinner(f"📈 Scanning {len(_sw_stocks)} stocks on daily chart..."):
+                _sw_results = scan_sma_weekly(
+                    _sw_stocks, _sw_capital, _sw_risk_pct, _sw_min_score, '')
+            st.session_state['sw_results']   = _sw_results
+            st.session_state['sw_scan_time'] = ist_now().strftime('%d %b %Y %H:%M IST')
+            st.rerun()
 
     # ── Show results ──────────────────────────────────────
     _sw_results  = st.session_state.get('sw_results', [])
@@ -13191,15 +13399,40 @@ if _show_monthlyswing:
             ["🔵 Largecap (Nifty 50)",
              "🟡 Midcap (Nifty Midcap 100)",
              "🟠 Smallcap",
-             "📊 Nifty 500 (All)"],
+             "📊 Nifty 500 (All)",
+             "📁 Upload My List"],
             horizontal=True, key="ms_universe",
-            help="Midcap recommended for monthly swing — best return potential")
-        _ms_stocks = (
-            LARGECAP_STOCKS if _ms_universe == "🔵 Largecap (Nifty 50)"       else
-            MIDCAP_STOCKS   if _ms_universe == "🟡 Midcap (Nifty Midcap 100)" else
-            SMALLCAP_STOCKS if _ms_universe == "🟠 Smallcap"                  else
-            POPULAR_STOCKS
-        )
+            help="Midcap recommended for monthly swing — best return potential. "
+                 "Upload My List = scan your own CSV of NSE symbols.")
+
+        if _ms_universe == "📁 Upload My List":
+            _ms_csv_file = st.file_uploader(
+                "Upload CSV/Excel with NSE symbols",
+                type=['csv', 'xlsx', 'xls'],
+                key="ms_csv_upload",
+                help="Any NSE export works — needs a 'Symbol' column "
+                     "(or symbols in the first column). "
+                     "e.g. ind_niftyautolist.csv from NSE website, "
+                     "or your own watchlist export.")
+            if _ms_csv_file is not None:
+                _ms_csv_stocks, _ms_csv_err = parse_csv_stock_list(_ms_csv_file)
+                if _ms_csv_err:
+                    st.error(f"❌ {_ms_csv_err}")
+                    _ms_stocks = POPULAR_STOCKS
+                else:
+                    st.success(f"✅ Loaded {len(_ms_csv_stocks)} symbols from "
+                               f"{_ms_csv_file.name}")
+                    _ms_stocks = _ms_csv_stocks
+            else:
+                st.info("⬆️ Upload a file to scan your own stock list")
+                _ms_stocks = []
+        else:
+            _ms_stocks = (
+                LARGECAP_STOCKS if _ms_universe == "🔵 Largecap (Nifty 50)"       else
+                MIDCAP_STOCKS   if _ms_universe == "🟡 Midcap (Nifty Midcap 100)" else
+                SMALLCAP_STOCKS if _ms_universe == "🟠 Smallcap"                  else
+                POPULAR_STOCKS
+            )
         st.markdown(
             f"<div style='font-size:11px;color:#64748b;margin-top:-8px'>"
             f"⚡ {len(_ms_stocks)} stocks · Weekly candles · SMA20 + SMA50</div>",
@@ -14213,30 +14446,33 @@ if _show_monthlyswing:
         help="Scans weekly charts — best run on weekends after market close")
 
     if _ms_run:
-        # Clear yfinance disk cache
-        try:
-            import shutil, pathlib
-            _yfc = pathlib.Path.home()/'.cache'/'py-yfinance'
-            if _yfc.exists(): shutil.rmtree(_yfc, ignore_errors=True)
-        except Exception:
-            pass
-        _ms_debug = st.empty()
-        _ms_debug.info("📅 Starting scan — fetching Nifty + sector data...")
-        try:
-            _ms_results = scan_monthly_swing(
-                _ms_stocks, _ms_capital, _ms_risk, _ms_min_score)
-            _ms_debug.empty()
-        except Exception as _ms_err:
-            _ms_debug.error(f"❌ Scan error: {str(_ms_err)}")
-            _ms_results = []
-        st.session_state['ms_results']   = _ms_results
-        st.session_state['ms_scan_time'] = ist_now().strftime('%d %b %Y %H:%M IST')
-        # Store Nifty status for topbar display
-        st.session_state['ms_nifty_bullish'] = st.session_state.get('_ms_nifty_temp', None)
-        if _ms_results:
-            st.rerun()
+        if not _ms_stocks:
+            st.warning("⚠️ No stocks to scan — upload a CSV file or pick a different universe above.")
         else:
-            st.warning(f"⚠️ No signals found. Try lowering min score to 50 or select a broader universe.")
+            # Clear yfinance disk cache
+            try:
+                import shutil, pathlib
+                _yfc = pathlib.Path.home()/'.cache'/'py-yfinance'
+                if _yfc.exists(): shutil.rmtree(_yfc, ignore_errors=True)
+            except Exception:
+                pass
+            _ms_debug = st.empty()
+            _ms_debug.info("📅 Starting scan — fetching Nifty + sector data...")
+            try:
+                _ms_results = scan_monthly_swing(
+                    _ms_stocks, _ms_capital, _ms_risk, _ms_min_score)
+                _ms_debug.empty()
+            except Exception as _ms_err:
+                _ms_debug.error(f"❌ Scan error: {str(_ms_err)}")
+                _ms_results = []
+            st.session_state['ms_results']   = _ms_results
+            st.session_state['ms_scan_time'] = ist_now().strftime('%d %b %Y %H:%M IST')
+            # Store Nifty status for topbar display
+            st.session_state['ms_nifty_bullish'] = st.session_state.get('_ms_nifty_temp', None)
+            if _ms_results:
+                st.rerun()
+            else:
+                st.warning(f"⚠️ No signals found. Try lowering min score to 50 or select a broader universe.")
 
     # ── Results ────────────────────────────────────────
     _ms_results  = st.session_state.get('ms_results', [])
@@ -15595,7 +15831,8 @@ if _show_backtest:
             try:
                 trade_date  = df.index[i]
                 fno_zone    = bt_get_fno_zone(trade_date)
-                is_fno      = sym_clean.upper() in FNO_STOCKS
+                _bt_fno_set, _ = load_custom_fno_list()
+                is_fno      = sym_clean.upper() in _bt_fno_set
             except:
                 fno_zone = 'SAFE'
                 is_fno   = False
