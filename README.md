@@ -6066,12 +6066,21 @@ with st.sidebar:
                  "Saved permanently until you upload a new one.")
 
         if _fno_upload is not None:
-            _fno_ok, _fno_msg, _fno_count = save_custom_fno_list(_fno_upload)
-            if _fno_ok:
-                st.success(f"✅ {_fno_msg}")
-                st.rerun()
+            # Guard against infinite rerun loop:
+            # Streamlit keeps the uploaded file across reruns,
+            # so without this check, save_custom_fno_list() +
+            # st.rerun() would fire forever on every refresh.
+            _fno_file_id = f"{_fno_upload.name}_{_fno_upload.size}"
+            if st.session_state.get('fno_last_processed_file') != _fno_file_id:
+                _fno_ok, _fno_msg, _fno_count = save_custom_fno_list(_fno_upload)
+                st.session_state['fno_last_processed_file'] = _fno_file_id
+                if _fno_ok:
+                    st.success(f"✅ {_fno_msg}")
+                    st.rerun()
+                else:
+                    st.error(f"❌ {_fno_msg}")
             else:
-                st.error(f"❌ {_fno_msg}")
+                st.caption("✅ This file is already loaded — upload a different file to update again.")
 
         if _fno_source == 'custom CSV (saved)':
             if st.button("↩️ Reset to built-in list", key="fno_reset_btn"):
