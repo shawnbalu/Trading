@@ -2279,7 +2279,7 @@ SECTOR_MAP = {
     'INDIAMART':'IT','NAUKRI':'IT','HAPPSTMNDS':'IT','NETWEB':'IT',
     'SYRMA':'IT','KAYNES':'IT','SAGILITY':'IT','TATATECH':'IT',
     'AFFLE':'IT','FIRSTCRY':'IT','PAYTM':'IT','ETERNAL':'IT',
-    'SWIGGY':'IT','ONESOURCE':'IT','IKS':'IT','REDINGTON':'IT',
+    'IKS':'IT','REDINGTON':'IT',
 
     # ── Telecom ───────────────────────────────────────────
     'BHARTIARTL':'TELECOM','IDEA':'TELECOM','TATACOMM':'TELECOM','HFCL':'TELECOM',
@@ -2308,6 +2308,8 @@ SECTOR_MAP = {
     'NEULANDLAB':'PHARMA','ERIS':'PHARMA','CONCORDBIO':'PHARMA','EMCURE':'PHARMA',
     'GLAND':'PHARMA','ZYDUSLIFE':'PHARMA','WOCKPHARMA':'PHARMA','PPLPHARMA':'PHARMA',
     'AKUMS':'PHARMA','POLYMED':'PHARMA','AGARWALEYE':'PHARMA',
+    'ONESOURCE':'PHARMA',  # FIXED 20-Jun-2026: was wrongly 'IT' — actually a
+                            # pharma CDMO (Dr Reddy's semaglutide mfg partner)
 
     # ── Energy & Oil ──────────────────────────────────────
     'RELIANCE':'ENERGY','ONGC':'ENERGY','BPCL':'ENERGY','IOC':'ENERGY',
@@ -2397,6 +2399,8 @@ SECTOR_MAP = {
     'PAGEIND':'RETAIL','BBTC':'RETAIL','HONAUT':'RETAIL',
     'THELEELA':'RETAIL','LEMONTREE':'RETAIL',
     'INDHOTEL':'RETAIL','EIHOTEL':'RETAIL',
+    'SWIGGY':'RETAIL',  # FIXED 20-Jun-2026: was wrongly 'IT' — food
+                         # delivery/quick-commerce is consumer retail, not IT
 
     # ── Media & Entertainment ─────────────────────────────
     'ZEEL':'MEDIA','SUNTV':'MEDIA','PVRINOX':'MEDIA','SAREGAMA':'MEDIA',
@@ -2845,7 +2849,7 @@ SECTOR_PROXY_STOCKS = {
     'TELECOM':     ['BHARTIARTL','INDUSTOWER','TATACOMM','HFCL','IDEA'],
     'TEXTILES':    ['PAGEIND','VARDHMAN','TRIDENT','WELSPUNIND','RAYMOND'],
     'AGRI':        ['PIIND','UPL','CHAMBLFERT','GSFC','COROMANDEL'],
-    'LOGISTICS':   ['CONCOR','BLUEDART','DELHIVERY','TCI','MAHINDLOG'],
+    'LOGISTICS':   ['CONCOR','BLUEDART','DELHIVERY','TCI','MAHLOG'],
 }
 
 # ─────────────────────────────────────────────────────────────
@@ -2940,7 +2944,7 @@ def classify_stock_sector(sym):
         # Logistics
         'CONCOR':     'LOGISTICS',  'BLUEDART':  'LOGISTICS',
         'DELHIVERY':  'LOGISTICS',  'TCI':       'LOGISTICS',
-        'MAHINDLOG':  'LOGISTICS',  'ALLCARGO':  'LOGISTICS',
+        'MAHLOG':     'LOGISTICS',  'ALLCARGO':  'LOGISTICS',
         # Agri/Fertilisers
         'PIIND':      'AGRI',       'UPL':       'AGRI',
         'CHAMBLFERT': 'AGRI',       'GSFC':      'AGRI',
@@ -3183,6 +3187,14 @@ def get_unified_sector_rankings(formula='weekly'):
         'status_map': status_map,
         'detail_map': detail_map,
         'ranked':     _ranked,
+        # ── Added for RS-vs-sector math (zero extra API cost — ──
+        # already computed above for the sector ranking itself).
+        # Lets get_rs_vs_sector() compute a stock's RS-vs-Nifty
+        # using the SAME periods/weights as this sector ranking,
+        # for a genuine apples-to-apples comparison.
+        'nifty_returns': {'r1': _nf_r1, 'r2': _nf_r2, 'r3': _nf_r3},
+        'periods':       (_p1, _p2, _p3),
+        'weights':       (_w1, _w2, _w3),
     }
     _SECTOR_RANK_CACHE[_cache_key] = (_result, _t.time())
     return _result
@@ -3736,48 +3748,92 @@ def get_drawdown_pct(capital):
 #  Stock underperforming sector = laggard ❌
 # ─────────────────────────────────────────────────────────────
 
-def get_rs_vs_sector(df, sector_name, sector_rs_map=None):
+def get_rs_vs_sector(df, sector_name, rankings):
     """
-    RS vs own sector using ALREADY FETCHED data.
-    Uses sector RS from unified rankings (no extra API call).
-    Compares stock's change vs sector ETF performance.
+    RS vs own sector — CORRECTED VERSION (20-Jun-2026).
 
-    df:            stock daily OHLCV (already downloaded)
-    sector_name:   sector string from classify_stock_sector()
-    sector_rs_map: dict from get_unified_sector_rankings()['rs_map']
+    FIXED BUG: the previous version compared the stock's RAW
+    return directly against rankings['rs_map'][sector], but
+    rs_map stores sector RS *already relative to Nifty* (e.g.
+    +3% means sector beat Nifty by 3%). Subtracting a raw stock
+    return from an already-relative sector number is a unit
+    mismatch — it silently produced wrong leader/laggard signals.
 
-    Returns (outperf_pct, score, label, clr)
+    CORRECT METHOD:
+      1. Compute the stock's OWN multi-period return using the
+         exact same periods/weights as the sector ranking formula
+      2. Subtract Nifty's multi-period return (from the cached
+         rankings dict — zero extra API call) → stock_RS_vs_Nifty
+      3. Compare to sector_RS_vs_Nifty (already in rankings['rs_map'])
+      4. diff = stock_RS_vs_Nifty - sector_RS_vs_Nifty
+         Both terms now share the same "vs Nifty" units — a true
+         apples-to-apples leader/laggard signal.
+
+    df:          stock daily/weekly OHLCV (already downloaded —
+                 no extra API call needed)
+    sector_name: sector string from classify_stock_sector()
+    rankings:    the FULL dict from get_unified_sector_rankings()
+                 (not just rs_map — needs nifty_returns/periods/
+                 weights too)
+
+    Returns (diff_pct, score, label, clr)
     """
     try:
-        if df is None or len(df) < 5:
+        if df is None or rankings is None:
             return 0.0, 0, '', '#64748b'
 
-        # Stock 20-day return
-        _n = min(20, len(df)-1)
-        _s_ret = float(
-            (df['Close'].iloc[-1] - df['Close'].iloc[-_n])
-            / df['Close'].iloc[-_n] * 100
-        )
-
-        # Sector return from cached rankings (NO API call)
-        if sector_rs_map and sector_name in sector_rs_map:
-            _sec_ret = float(sector_rs_map[sector_name])
-        else:
+        _rs_map = rankings.get('rs_map', {})
+        if sector_name not in _rs_map:
             return 0.0, 0, '', '#64748b'
 
-        # Outperformance vs sector
-        _diff = round(_s_ret - _sec_ret, 2)
+        _nifty_rets = rankings.get('nifty_returns')
+        _periods    = rankings.get('periods')
+        _weights    = rankings.get('weights')
+        if not _nifty_rets or not _periods or not _weights:
+            # Rankings dict is from before this fix / malformed —
+            # fail safe rather than guess
+            return 0.0, 0, '', '#64748b'
 
-        # RS vs sector — boosted weight
-        # This is the KEY filter that finds leaders in any sector
-        # HINDZINC in weak metals, TORNTPHARM in weak pharma
-        # = outperforming sector = enter regardless of sector rank
-        if   _diff >= 8.0:  _sc = 15; _lbl = f'🌟 Strong sector leader (+{_diff:.1f}% vs sector)'
-        elif _diff >= 5.0:  _sc = 10; _lbl = f'🏆 Sector leader (+{_diff:.1f}% vs sector)'
-        elif _diff >= 2.0:  _sc = 6;  _lbl = f'✅ Outperforming sector (+{_diff:.1f}%)'
-        elif _diff >= -3.0: _sc = 0;  _lbl = f'➡️ Inline with sector ({_diff:+.1f}%)'
-        elif _diff >= -8.0: _sc = -2; _lbl = f'⚠️ Slightly behind sector ({_diff:.1f}%)'
-        else:               _sc = -4; _lbl = f'❌ Lagging sector ({_diff:.1f}%)'
+        _p1, _p2, _p3 = _periods
+        _w1, _w2, _w3 = _weights
+        _nf_r1 = _nifty_rets.get('r1', 0.0)
+        _nf_r2 = _nifty_rets.get('r2', 0.0)
+        _nf_r3 = _nifty_rets.get('r3', 0.0)
+
+        _cl = df['Close'].dropna()
+        if len(_cl) < min(_p3, 5) + 2:
+            return 0.0, 0, '', '#64748b'
+
+        def _ret(period):
+            _n = min(period, len(_cl) - 1)
+            if _n <= 0:
+                return 0.0
+            return float((_cl.iloc[-1] - _cl.iloc[-_n]) / _cl.iloc[-_n] * 100)
+
+        _s_r1 = _ret(_p1)
+        _s_r2 = _ret(_p2)
+        _s_r3 = _ret(_p3)
+
+        # Stock's RS vs Nifty — SAME formula as sector ranking
+        _stock_rs1 = _s_r1 - _nf_r1
+        _stock_rs2 = _s_r2 - _nf_r2
+        _stock_rs3 = _s_r3 - _nf_r3
+        _stock_rs_vs_nifty = round(_w1*_stock_rs1 + _w2*_stock_rs2 + _w3*_stock_rs3, 2)
+
+        # Sector's RS vs Nifty — already computed, cached, reused
+        _sector_rs_vs_nifty = float(_rs_map[sector_name])
+
+        # TRUE apples-to-apples comparison — both in "vs Nifty" units
+        _diff = round(_stock_rs_vs_nifty - _sector_rs_vs_nifty, 2)
+
+        # Bonus-weighted scoring — rewards leaders, minimal penalty
+        # for laggards (same philosophy as sector-rank scoring)
+        if   _diff >= 8.0:  _sc = 15; _lbl = f'🌟 Strong sector leader (+{_diff:.1f}pp vs sector)'
+        elif _diff >= 5.0:  _sc = 10; _lbl = f'🏆 Sector leader (+{_diff:.1f}pp vs sector)'
+        elif _diff >= 2.0:  _sc = 6;  _lbl = f'✅ Outperforming sector (+{_diff:.1f}pp)'
+        elif _diff >= -3.0: _sc = 0;  _lbl = f'➡️ Inline with sector ({_diff:+.1f}pp)'
+        elif _diff >= -8.0: _sc = -2; _lbl = f'⚠️ Slightly behind sector ({_diff:.1f}pp)'
+        else:               _sc = -4; _lbl = f'❌ Lagging sector ({_diff:.1f}pp)'
 
         _clr = '#15803d' if _sc > 0 else '#64748b' if _sc == 0 else '#d97706'
         return _diff, _sc, _lbl, _clr
@@ -12024,6 +12080,26 @@ if _show_smaweekly:
                 _sw_adx_score, _sw_adx_lbl, _sw_adx_clr = \
                     get_adx_score(_sw_adx, _sw_pdi, _sw_mdi)
 
+                # ── RS vs Own Sector (Step 1 fix — 20-Jun-2026) ─
+                # Finds stocks outperforming/lagging THEIR OWN sector,
+                # regardless of overall sector rank. e.g. KIMS can be
+                # a sector leader even while PHARMA overall is weak.
+                # ISOLATED try/except — never relies on the scanner's
+                # outer except, never silently empties the result list.
+                # Defaults to neutral (0 pts) on any failure.
+                _sw_rs_sec_diff  = 0.0
+                _sw_rs_sec_score = 0
+                _sw_rs_sec_label = ''
+                _sw_rs_sec_clr   = '#64748b'
+                try:
+                    _sw_sec_for_rs = classify_stock_sector(sym_clean)
+                    _sw_rs_sec_diff, _sw_rs_sec_score, _sw_rs_sec_label, _sw_rs_sec_clr = \
+                        get_rs_vs_sector(df, _sw_sec_for_rs, _sw_rankings)
+                except Exception as _sw_rs_exc:
+                    st.session_state.setdefault('sw_scan_errors', []).append(
+                        f"{symbol} RS-vs-sector (non-fatal, score=0): {str(_sw_rs_exc)[:80]}")
+                score += _sw_rs_sec_score
+
                 # ── Filter 1: Closing position in candle ──────
                 # week_pos < 0.25 = sellers won = REJECT
                 # week_pos > 0.75 = buyers won = +8 pts
@@ -12320,6 +12396,11 @@ if _show_smaweekly:
                     'adx_score':     _sw_adx_score,
                     'adx_label':     _sw_adx_lbl,
                     'adx_clr':       _sw_adx_clr,
+                    # RS vs own sector (Step 1 fix — 20-Jun-2026)
+                    'rs_sec_diff':   _sw_rs_sec_diff,
+                    'rs_sec_score':  _sw_rs_sec_score,
+                    'rs_sec_label':  _sw_rs_sec_label,
+                    'rs_sec_clr':    _sw_rs_sec_clr,
                     # Filter 3 — dynamic risk sizing
                     'adj_risk_pct':  _adj_risk,
                     'risk_label':    _risk_lbl,
@@ -12402,11 +12483,18 @@ if _show_smaweekly:
     _sw_results  = st.session_state.get('sw_results', [])
     _sw_scantime = st.session_state.get('sw_scan_time', '')
 
-    # ── Debug: Show scan errors if no results ─────────────
+    # ── Debug: Show scan errors (even if scan succeeded) ──
+    # Non-fatal errors (e.g. RS-vs-sector isolated failures)
+    # default to neutral and don't block results, but you
+    # should still be able to see them happened.
     _sw_errors = st.session_state.get('sw_scan_errors', [])
-    if _sw_errors and len(_sw_results) == 0:
-        with st.expander(f'🔍 Debug: {len(_sw_errors)} stocks had errors during scan'):
-            for _e in _sw_errors[:10]:
+    if _sw_errors:
+        _sw_err_title = (f'🔍 Debug: {len(_sw_errors)} non-fatal error(s) during scan '
+                          f'(results still shown — these defaulted to neutral)'
+                          if len(_sw_results) > 0 else
+                          f'🔍 Debug: {len(_sw_errors)} stocks had errors during scan')
+        with st.expander(_sw_err_title):
+            for _e in _sw_errors[:15]:
                 st.code(_e)
         st.session_state['sw_scan_errors'] = []
 
@@ -12942,6 +13030,12 @@ if _show_smaweekly:
                    f"color:{_sw_r.get('adx_clr','#64748b')}'>"
                    f"{_sw_r.get('adx_label','')}</div>"
                    if _sw_r.get('adx_label') else "")
+                + (f"<div style='font-size:10px;font-weight:700;margin-top:4px;"
+                   f"color:{_sw_r.get('rs_sec_clr','#64748b')}'>"
+                   f"📊 {_sw_r.get('rs_sec_label','')} "
+                   f"({'+' if _sw_r.get('rs_sec_score',0)>=0 else ''}{_sw_r.get('rs_sec_score',0)}pts)"
+                   f"</div>"
+                   if _sw_r.get('rs_sec_label') else "")
                 + (f"<div style='font-size:10px;font-weight:700;margin-top:4px;"
                    f"color:{_sw_r.get('risk_clr','#64748b')}'>"
                    f"⚖️ Position sizing: {_sw_r.get('risk_label','')} "
@@ -13544,6 +13638,26 @@ if _show_monthlyswing:
         _prog_ms = st.progress(0, text="📅 Initialising — fetching Nifty + sector data...")
         _stat_ms = st.empty()
 
+        # ── Funnel counter — tracks WHERE stocks get filtered ──
+        # Lets us tell apart "genuine bearish market, nothing
+        # qualifies" from "something's actually broken" with
+        # hard numbers instead of guessing.
+        _ms_funnel = {
+            'total_scanned':      0,
+            'data_ok':            0,
+            'sma_trend_ok':       0,   # passed sma20>sma50, slopes, price>sma20
+            'candle_recovering':  0,   # passed last3_red / recovering check
+            'not_extended':       0,   # passed pct_above20 proximity gate
+            'fib_retrace_ok':     0,   # passed fibonacci retrace window
+            'weekly_move_ok':     0,   # passed this_wk_move / RSI gates
+            'rs_vs_nifty_ok':     0,   # passed _rs_ratio >= 0.95
+            'has_signal_pattern': 0,   # cross/pullback/breakout/52w detected
+            'score_pre_filter':   0,   # passed score < 40 pre-filter
+            'fundamentals_ok':    0,   # passed fundamental reject check
+            'structure_ok':       0,   # passed PA structure_reject check
+            'final_score_ok':     0,   # passed score >= min_score
+        }
+
         # ══════════════════════════════════════════════════
         # PHASE 1 — Pre-scan: Nifty + Sector data (once)
         # ══════════════════════════════════════════════════
@@ -13665,6 +13779,7 @@ if _show_monthlyswing:
             try:
                 _ticker_sym = symbol if symbol.endswith('.NS') else symbol+'.NS'
                 _t = yf.Ticker(_ticker_sym)
+                _ms_funnel['total_scanned'] += 1
 
                 # ── Fetch weekly candles ──────────────────
                 df = _t.history(period='2y', interval='1wk',
@@ -13675,6 +13790,7 @@ if _show_monthlyswing:
                 df = df[['Open','High','Low','Close','Volume']].dropna()
                 if len(df) < 28:
                     continue
+                _ms_funnel['data_ok'] += 1
 
                 # ── Indicators ───────────────────────────
                 df['SMA20'] = df['Close'].rolling(20).mean()
@@ -13763,6 +13879,7 @@ if _show_monthlyswing:
                 if sma20_slope<=0:        continue
                 if sma50_slope<-0.5:      continue
                 if close<=sma20:          continue
+                _ms_funnel['sma_trend_ok'] += 1
 
                 # ── VOLATILITY GATE ───────────────────────
                 # Weekly ATR% = ATR / Price × 100
@@ -13796,6 +13913,7 @@ if _show_monthlyswing:
                 if last3_red:             continue
                 recovering = c0>c1 or c0>o0
                 if not recovering:        continue
+                _ms_funnel['candle_recovering'] += 1
 
                 # ── ENTRY BADGE — filter + classify ───────
                 # High ATR stocks (>5%) need tighter SMA20 proximity
@@ -13806,6 +13924,7 @@ if _show_monthlyswing:
                 # Hard filter — hide if too extended
                 if pct_above20 > _ms_max_prox:
                     continue
+                _ms_funnel['not_extended'] += 1
 
                 # Assign entry badge
                 if _ms_atr_tight:
@@ -13821,9 +13940,11 @@ if _show_monthlyswing:
                 # or retrace < 15% (not pulled back enough — near high)
                 if _retrace_pct > 78.6:   continue  # too deep — trend broken
                 if _retrace_pct < 15:     continue  # not pulled back — near high
+                _ms_funnel['fib_retrace_ok'] += 1
 
                 if this_wk_move>8:        continue
                 if rsi>70:                continue
+                _ms_funnel['weekly_move_ok'] += 1
 
                 # NEW: Relative strength vs Nifty (hard reject if badly underperforming)
                 _rs_ratio = 1.0
@@ -13831,6 +13952,7 @@ if _show_monthlyswing:
                     _stk_4w  = float(df['Close'].iloc[-4]) if len(df)>=4 else close
                     _rs_ratio= (close/_stk_4w) / (_nifty_closes[0]/_nifty_closes[4]) if _stk_4w>0 else 1.0
                 if _rs_ratio < 0.95:      continue  # badly underperforming Nifty → skip
+                _ms_funnel['rs_vs_nifty_ok'] += 1
 
                 # ── SIGNALS ───────────────────────────────
                 cross_w0  = sma20>sma50 and sma20_p<=float(p['SMA50'])
@@ -13920,6 +14042,7 @@ if _show_monthlyswing:
 
                 if not has_cross and not has_pb and not is_brkout and not is_52w_brkout:
                     continue
+                _ms_funnel['has_signal_pattern'] += 1
 
                 if rsi>70:     continue
                 if this_wk_move>8: continue
@@ -14059,6 +14182,7 @@ if _show_monthlyswing:
 
                 if score < 40:  # low pre-filter
                     continue
+                _ms_funnel['score_pre_filter'] += 1
 
                 # ══════════════════════════════════════════
                 # FUNDAMENTAL FILTER
@@ -14121,6 +14245,7 @@ if _show_monthlyswing:
 
                 if _fund_reject:
                     continue
+                _ms_funnel['fundamentals_ok'] += 1
 
                 # ── Fundamental scoring ───────────────────
                 # D/E score
@@ -14163,6 +14288,25 @@ if _show_monthlyswing:
                 _ms_adx_score, _ms_adx_lbl, _ms_adx_clr = \
                     get_adx_score(_ms_adx, _ms_pdi, _ms_mdi)
 
+                # ── RS vs Own Sector (Step 1 fix — 20-Jun-2026) ─
+                # Same logic as SMA Weekly — finds stocks outperforming
+                # their own sector regardless of overall sector rank.
+                # ISOLATED try/except — never relies on the scanner's
+                # outer except, never silently empties the result list.
+                # Defaults to neutral (0 pts) on any failure.
+                _ms_rs_sec_diff  = 0.0
+                _ms_rs_sec_score = 0
+                _ms_rs_sec_label = ''
+                _ms_rs_sec_clr   = '#64748b'
+                try:
+                    _ms_sec_for_rs = classify_stock_sector(sym_clean)
+                    _ms_rs_sec_diff, _ms_rs_sec_score, _ms_rs_sec_label, _ms_rs_sec_clr = \
+                        get_rs_vs_sector(df, _ms_sec_for_rs, _ms_rankings)
+                except Exception as _ms_rs_exc:
+                    st.session_state.setdefault('ms_scan_errors', []).append(
+                        f"{symbol} RS-vs-sector (non-fatal, score=0): {str(_ms_rs_exc)[:80]}")
+                score += _ms_rs_sec_score
+
                 # ── Filter 1: Candle close position ───────
                 # Reject if price closed in bottom 25% of week
                 _ms_wp, _ms_wp_score, _ms_wp_label, _ms_wp_reject = \
@@ -14186,6 +14330,7 @@ if _show_monthlyswing:
 
                 if score < min_score:
                     continue
+                _ms_funnel['final_score_ok'] += 1
 
                 # ── Fetch live price for entry/SL/targets ─
                 # Weekly candle = used for signals and scoring (correct)
@@ -14274,6 +14419,7 @@ if _show_monthlyswing:
                 # Hard reject if structure broken
                 if _pa['structure_reject']:
                     continue
+                _ms_funnel['structure_ok'] += 1
 
                 # Add PA score to total
                 score += _pa['pa_total_score']
@@ -14430,6 +14576,11 @@ if _show_monthlyswing:
                     'adx_score':     _ms_adx_score,
                     'adx_label':     _ms_adx_lbl,
                     'adx_clr':       _ms_adx_clr,
+                    # RS vs own sector (Step 1 fix — 20-Jun-2026)
+                    'rs_sec_diff':   _ms_rs_sec_diff,
+                    'rs_sec_score':  _ms_rs_sec_score,
+                    'rs_sec_label':  _ms_rs_sec_label,
+                    'rs_sec_clr':    _ms_rs_sec_clr,
                     # Filter 3 — dynamic risk sizing
                     'adj_risk_pct':  _ms_adj_risk,
                     'risk_label':    _ms_risk_lbl,
@@ -14457,6 +14608,11 @@ if _show_monthlyswing:
                 _ms_cs2 = calc_confident_score(r)
                 r.update(_ms_cs2)
         results.sort(key=lambda x: x.get('confident_score', 0), reverse=True)
+
+        # Save funnel data so we can show WHERE stocks dropped off,
+        # regardless of whether the final result list is empty or not.
+        st.session_state['ms_funnel'] = dict(_ms_funnel)
+
         return results
     # ── Scan button ────────────────────────────────────
     _ms_run = st.button(
@@ -14496,6 +14652,63 @@ if _show_monthlyswing:
     # ── Results ────────────────────────────────────────
     _ms_results  = st.session_state.get('ms_results', [])
     _ms_scantime = st.session_state.get('ms_scan_time', '')
+
+    # ── Debug: Show scan errors (even if scan succeeded) ──
+    # Non-fatal errors (e.g. RS-vs-sector isolated failures)
+    # default to neutral and don't block results, but you
+    # should still be able to see them happened.
+    _ms_errors = st.session_state.get('ms_scan_errors', [])
+    if _ms_errors:
+        _ms_err_title = (f'🔍 Debug: {len(_ms_errors)} non-fatal error(s) during scan '
+                          f'(results still shown — these defaulted to neutral)'
+                          if len(_ms_results) > 0 else
+                          f'🔍 Debug: {len(_ms_errors)} stocks had errors during scan')
+        with st.expander(_ms_err_title):
+            for _e in _ms_errors[:15]:
+                st.code(_e)
+        st.session_state['ms_scan_errors'] = []
+
+    # ── Funnel: Where are stocks getting filtered? ────────
+    # Shows exact dropout counts at every gate — tells apart
+    # "genuine bearish market, nothing qualifies" from
+    # "something's actually broken" with hard numbers.
+    _ms_funnel = st.session_state.get('ms_funnel', None)
+    if _ms_funnel:
+        with st.expander(
+            f"📊 Scan Funnel — where did {_ms_funnel.get('total_scanned',0)} stocks go?",
+            expanded=(len(_ms_results) == 0)):
+            _funnel_steps = [
+                ('Total scanned',                  'total_scanned'),
+                ('Had valid price data',           'data_ok'),
+                ('Passed SMA20>SMA50 + slope + price>SMA20', 'sma_trend_ok'),
+                ('Passed candle recovering check', 'candle_recovering'),
+                ('Passed proximity (not extended)','not_extended'),
+                ('Passed Fibonacci retrace window','fib_retrace_ok'),
+                ('Passed weekly move/RSI gates',   'weekly_move_ok'),
+                ('Passed RS vs Nifty ≥ 0.95',      'rs_vs_nifty_ok'),
+                ('Had a valid signal pattern',     'has_signal_pattern'),
+                ('Passed raw score pre-filter (40)','score_pre_filter'),
+                ('Passed fundamentals check',      'fundamentals_ok'),
+                ('Passed price-action structure',  'structure_ok'),
+                (f'Passed final min score ({_ms_min_score})', 'final_score_ok'),
+            ]
+            _prev = _ms_funnel.get('total_scanned', 0)
+            for _label, _key in _funnel_steps:
+                _count = _ms_funnel.get(_key, 0)
+                _drop  = _prev - _count if _key != 'total_scanned' else 0
+                _bar   = '█' * max(1, int(_count / max(_ms_funnel.get('total_scanned',1),1) * 30)) if _count > 0 else ''
+                st.markdown(
+                    f"<div style='font-family:monospace;font-size:11px;padding:2px 0'>"
+                    f"{_label:<42} {_count:>5}"
+                    f"{f'  <span style=\"color:#dc2626\">(-{_drop})</span>' if _drop > 0 else ''}"
+                    f"</div>", unsafe_allow_html=True)
+                _prev = _count
+            st.caption(
+                "If 'final min score' is 0 but earlier steps show plenty of "
+                "survivors, the bottleneck is the score threshold — lower it. "
+                "If it drops to 0 very early (e.g. at SMA trend gate), that's "
+                "genuine broad-market weakness — nothing wrong, just no "
+                "stocks currently satisfy a real uptrend definition.")
 
     # ── Nifty State Banner for Monthly Swing ──────────────
     _ms_nifty_disp = st.session_state.get('nifty_swing_weekly', {}).get('state', 'UNKNOWN')
@@ -15218,6 +15431,12 @@ if _show_monthlyswing:
                    f"color:{_ms_r.get('adx_clr','#64748b')}'>"
                    f"{_ms_r.get('adx_label','')}</span>"
                    if _ms_r.get('adx_label') else "")
+                + (f"<span style='font-weight:700;"
+                   f"color:{_ms_r.get('rs_sec_clr','#64748b')}'>"
+                   f"📊 {_ms_r.get('rs_sec_label','')} "
+                   f"({'+' if _ms_r.get('rs_sec_score',0)>=0 else ''}{_ms_r.get('rs_sec_score',0)}pts)"
+                   f"</span>"
+                   if _ms_r.get('rs_sec_label') else "")
                 + "</div>"
                 "<div style='display:flex;gap:12px;flex-wrap:wrap;"
                 "padding-top:5px;border-top:1px solid #e2e8f0'>"
@@ -15651,6 +15870,76 @@ if _show_backtest:
         <div class='topbar-title'>🧪 Strategy Backtester — Validate Your Edge</div>
     </div>
     """, unsafe_allow_html=True)
+
+    # ── DIAGNOSTIC: RS vs Sector — isolated test ──────────────
+    # Standalone verification tool, completely separate from the
+    # live scanners. Run this FIRST and confirm numbers look right
+    # before wiring get_rs_vs_sector() into scan_sma_weekly() or
+    # scan_monthly_swing().
+    with st.expander("🔬 Diagnostic: Test RS-vs-Sector Math (isolated, no scanner impact)"):
+        st.caption(
+            "Runs the corrected get_rs_vs_sector() on known stocks to verify "
+            "the math before wiring it into live scanners. Zero impact on "
+            "SMA Weekly / Monthly Swing — this only reads data and prints results.")
+
+        _rs_test_stocks = st.text_input(
+            "Stocks to test (comma-separated, no .NS)",
+            value="HINDZINC,TORNTPHARM,PCBL,KIMS,INDUSTOWER",
+            key="rs_diag_stocks")
+
+        _rs_test_formula = st.radio(
+            "Formula", ["weekly", "monthly"], horizontal=True, key="rs_diag_formula",
+            help="weekly = SW periods (20/10/5 day) · monthly = MS periods (60/20/10 day)")
+
+        if st.button("▶️ Run RS-vs-Sector Test", key="rs_diag_run"):
+            _rs_diag_rankings = get_unified_sector_rankings(formula=_rs_test_formula)
+            _rs_diag_syms = [s.strip().upper() for s in _rs_test_stocks.split(',') if s.strip()]
+
+            st.markdown(f"**Nifty multi-period returns** "
+                        f"(periods {_rs_diag_rankings['periods']}, "
+                        f"weights {_rs_diag_rankings['weights']}): "
+                        f"r1={_rs_diag_rankings['nifty_returns']['r1']:.2f}%, "
+                        f"r2={_rs_diag_rankings['nifty_returns']['r2']:.2f}%, "
+                        f"r3={_rs_diag_rankings['nifty_returns']['r3']:.2f}%")
+
+            _rs_diag_rows = []
+            for _sym in _rs_diag_syms:
+                try:
+                    _sec = classify_stock_sector(_sym)
+                    _sec_rs = _rs_diag_rankings['rs_map'].get(_sec, None)
+
+                    _interval = '1d' if _rs_test_formula == 'weekly' else '1wk'
+                    _period   = '1y' if _rs_test_formula == 'weekly' else '3y'
+                    _df_diag = yf.Ticker(f'{_sym}.NS').history(
+                        period=_period, interval=_interval,
+                        auto_adjust=True, actions=False)
+
+                    if _df_diag is None or len(_df_diag) < 10:
+                        _rs_diag_rows.append({
+                            'Symbol': _sym, 'Sector': _sec, 'Error': 'No price data'})
+                        continue
+
+                    _diff, _sc, _lbl, _clr = get_rs_vs_sector(
+                        _df_diag, _sec, _rs_diag_rankings)
+
+                    _rs_diag_rows.append({
+                        'Symbol':       _sym,
+                        'Sector':       _sec,
+                        'Sector RS vs Nifty': f"{_sec_rs:+.2f}%" if _sec_rs is not None else 'N/A',
+                        'Stock vs Sector (diff)': f"{_diff:+.2f}pp",
+                        'Score':        f"{_sc:+d}",
+                        'Label':        _lbl,
+                    })
+                except Exception as _rs_diag_exc:
+                    _rs_diag_rows.append({
+                        'Symbol': _sym, 'Error': str(_rs_diag_exc)[:100]})
+
+            if _rs_diag_rows:
+                st.dataframe(pd.DataFrame(_rs_diag_rows), use_container_width=True)
+            st.caption(
+                "Sanity check: stocks known to be outperforming their sector "
+                "should show positive diff + a leader label. Stocks known to "
+                "be lagging/PSAR-bearish should show negative or zero diff.")
 
     # ── Helper functions ──────────────────────────────────────
 
