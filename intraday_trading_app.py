@@ -3842,58 +3842,104 @@ def get_rs_vs_sector(df, sector_name, rankings):
         return 0.0, 0, '', '#64748b'
 
 
-def get_htf_alignment(df, current_tf='daily'):
+def get_htf_alignment(sym_clean, current_tf='daily'):
     """
-    Higher timeframe alignment using ALREADY FETCHED data.
-    Resamples daily df to weekly — NO extra API call.
+    Higher timeframe alignment — CORRECTED VERSION (20-Jun-2026).
 
-    df:         stock OHLCV (daily for SW, weekly for MS)
-    current_tf: 'daily' → check weekly | 'weekly' → check monthly
+    FIXED 3 BUGS total (2 found before wiring in, 1 found via the
+    isolated diagnostic test BEFORE wiring into Monthly Swing —
+    exactly why we test in isolation first):
+
+      BUG 1: df.resample('W', on=df.index.name...) always threw
+             KeyError with real yfinance data (index vs column
+             confusion) — silently caught, always returned
+             neutral. The SW path was a complete no-op.
+      BUG 2: MS manually chunked only ~104 weekly bars (2y) into
+             ~21-bar buckets, giving just 4-5 synthetic "monthly"
+             bars — far too shallow for a meaningful 20/50-period
+             moving average comparison. The "Uptrend confirmed"
+             label was mathematically unreachable.
+      BUG 3 (found via diagnostic test, caught pre-wiring): even
+             after fixing BUG 2 with a direct monthly fetch, using
+             20/50-MONTH SMAs over a 10y window measures decade-
+             scale secular drift, not recent momentum. 4 of 5 test
+             stocks (including a known LOSS trade) scored the
+             identical maximum score — zero discriminative power
+             for a 3-5 WEEK swing decision. Shortened to 6/12-month
+             SMAs over a 3y window — recent, relevant momentum.
+
+    FIX: fetch the higher timeframe DIRECTLY via yfinance instead
+    of approximating it from already-downloaded data. Costs ONE
+    extra API call per stock (no longer zero-cost like RS-vs-
+    sector), but gives genuinely correct higher-timeframe bars.
+
+    sym_clean:   bare symbol, no '.NS' suffix
+    current_tf:  'daily'  → fetch+check WEEKLY chart (20/50-week SMA, for SW)
+                 'weekly' → fetch+check MONTHLY chart (6/12-month SMA, for MS)
 
     Returns (score, label, clr)
     """
     try:
-        if df is None or len(df) < 10:
+        if current_tf == 'daily':
+            # SW: check weekly trend — 20/50-week SMA already
+            # validated with good differentiation (Bearish/Caution/
+            # Uptrend all appearing sensibly across test stocks)
+            _tf_lbl   = '1wk'
+            _interval = '1wk'
+            _period   = '3y'    # ~150 weekly bars — plenty for SMA50
+            _p_short  = 20
+            _p_long   = 50
+            _slope_lookback = 5   # ~5 weeks ago
+        else:
+            # MS: check monthly trend.
+            # FIXED 20-Jun-2026: was using 20/50-MONTH SMAs (~1.7yr/
+            # 4.2yr) over a 10y window — this measures decade-scale
+            # secular drift, which is true for almost any surviving
+            # NSE stock during India's broad multi-year bull market.
+            # 4 of 5 test stocks (including a known LOSS trade)
+            # scored the identical maximum 'Uptrend confirmed' —
+            # zero discriminative power for a 3-5 WEEK swing decision.
+            # Shortened to 6/12-month SMAs — recent momentum that's
+            # actually relevant to a short swing hold, not multi-year
+            # drift.
+            _tf_lbl   = '1mo'
+            _interval = '1mo'
+            _period   = '3y'    # ~36 monthly bars — plenty for 6/12 SMA
+            _p_short  = 6
+            _p_long   = 12
+            _slope_lookback = 2   # ~2 months ago
+
+        _df = yf.Ticker(f'{sym_clean}.NS').history(
+            period=_period, interval=_interval,
+            auto_adjust=True, actions=False)
+
+        if _df is None or len(_df) < 15:
             return 0, '', '#64748b'
 
-        if current_tf == 'daily':
-            # Resample daily → weekly to check higher TF
-            _tf_lbl = '1wk'
-            _df = df.resample('W', on=df.index.name if df.index.name else None).agg({
-                'Close': 'last', 'High': 'max',
-                'Low': 'min',   'Open': 'first'
-            }).dropna() if hasattr(df.index, 'freq') else df
+        _df.columns = [c.split(' ')[0] if ' ' in str(c) else c
+                       for c in _df.columns]
+        _cl = _df['Close'].dropna()
+        if len(_cl) < 15:
+            return 0, '', '#64748b'
 
-            # If resample doesn't work, use weekly approximation from daily
-            # Group every 5 rows as a week
-            _closes = df['Close'].dropna().values
-            _weekly = [float(_closes[max(0,i-4):i+1].mean())
-                       for i in range(4, len(_closes), 5)]
-            if len(_weekly) < 5:
-                return 0, '', '#64748b'
+        _p20 = min(_p_short, len(_cl))
+        _p50 = min(_p_long,  len(_cl))
+
+        _s20   = float(_cl.tail(_p20).mean())
+        _s50   = float(_cl.tail(_p50).mean())
+        _price = float(_cl.iloc[-1])
+
+        # Slope check — guard against too-short history same way
+        # the rest of the app does
+        _slope_window = _p20 + _slope_lookback
+        if len(_cl) >= _slope_window:
+            _s20p = float(_cl.iloc[-_slope_window:-_slope_lookback].mean())
         else:
-            # For monthly: group every ~21 days
-            _closes = df['Close'].dropna().values
-            _weekly = [float(_closes[max(0,i-20):i+1].mean())
-                       for i in range(20, len(_closes), 21)]
-            _tf_lbl = '1mo'
-            if len(_weekly) < 3:
-                return 0, '', '#64748b'
-
-        import numpy as _np2
-        _weekly = _np2.array(_weekly)
-        _p20 = min(20, len(_weekly))
-        _p50 = min(50, len(_weekly))
-
-        _s20   = float(_np2.mean(_weekly[-_p20:]))
-        _s50   = float(_np2.mean(_weekly[-_p50:]))
-        _price = float(_weekly[-1])
-        _s20p  = float(_np2.mean(_weekly[-min(25,len(_weekly)):-min(5,len(_weekly))])) if len(_weekly) >= 6 else _s20
+            _s20p = _s20  # insufficient history — treat as flat, not "rising"
 
         _above  = _price > _s20 > _s50
         _rising = _s20 > _s20p
 
-        # Smaller scores — reward alignment, minimal penalty
         if   _above and _rising:
             _sc = 8;  _lbl = f'✅ HTF {_tf_lbl}: Uptrend confirmed'
             _clr = '#15803d'
@@ -12100,6 +12146,26 @@ if _show_smaweekly:
                         f"{symbol} RS-vs-sector (non-fatal, score=0): {str(_sw_rs_exc)[:80]}")
                 score += _sw_rs_sec_score
 
+                # ── Higher Timeframe Alignment (20-Jun-2026) ────
+                # Checks weekly chart confirms this daily signal.
+                # 2 timeframes agreeing = much stronger signal.
+                # COSTS 1 EXTRA API CALL per stock (fetches real
+                # weekly data directly — the old resample-based
+                # approach was broken, see get_htf_alignment()).
+                # ISOLATED try/except — same protection pattern
+                # as RS-vs-sector above. Defaults to neutral (0)
+                # on any failure, never blocks the stock.
+                _sw_htf_score = 0
+                _sw_htf_label = ''
+                _sw_htf_clr   = '#64748b'
+                try:
+                    _sw_htf_score, _sw_htf_label, _sw_htf_clr = \
+                        get_htf_alignment(sym_clean, current_tf='daily')
+                except Exception as _sw_htf_exc:
+                    st.session_state.setdefault('sw_scan_errors', []).append(
+                        f"{symbol} HTF-alignment (non-fatal, score=0): {str(_sw_htf_exc)[:80]}")
+                score += _sw_htf_score
+
                 # ── Filter 1: Closing position in candle ──────
                 # week_pos < 0.25 = sellers won = REJECT
                 # week_pos > 0.75 = buyers won = +8 pts
@@ -12401,6 +12467,10 @@ if _show_smaweekly:
                     'rs_sec_score':  _sw_rs_sec_score,
                     'rs_sec_label':  _sw_rs_sec_label,
                     'rs_sec_clr':    _sw_rs_sec_clr,
+                    # HTF alignment (20-Jun-2026)
+                    'htf_score':     _sw_htf_score,
+                    'htf_label':     _sw_htf_label,
+                    'htf_clr':       _sw_htf_clr,
                     # Filter 3 — dynamic risk sizing
                     'adj_risk_pct':  _adj_risk,
                     'risk_label':    _risk_lbl,
@@ -13036,6 +13106,12 @@ if _show_smaweekly:
                    f"({'+' if _sw_r.get('rs_sec_score',0)>=0 else ''}{_sw_r.get('rs_sec_score',0)}pts)"
                    f"</div>"
                    if _sw_r.get('rs_sec_label') else "")
+                + (f"<div style='font-size:10px;font-weight:700;margin-top:4px;"
+                   f"color:{_sw_r.get('htf_clr','#64748b')}'>"
+                   f"{_sw_r.get('htf_label','')} "
+                   f"({'+' if _sw_r.get('htf_score',0)>=0 else ''}{_sw_r.get('htf_score',0)}pts)"
+                   f"</div>"
+                   if _sw_r.get('htf_label') else "")
                 + (f"<div style='font-size:10px;font-weight:700;margin-top:4px;"
                    f"color:{_sw_r.get('risk_clr','#64748b')}'>"
                    f"⚖️ Position sizing: {_sw_r.get('risk_label','')} "
@@ -14307,6 +14383,29 @@ if _show_monthlyswing:
                         f"{symbol} RS-vs-sector (non-fatal, score=0): {str(_ms_rs_exc)[:80]}")
                 score += _ms_rs_sec_score
 
+                # ── Higher Timeframe Alignment (20-Jun-2026) ────
+                # Checks monthly chart confirms this weekly signal.
+                # 2 timeframes agreeing = much stronger signal.
+                # COSTS 1 EXTRA API CALL per stock (fetches real
+                # monthly data directly). Uses 6/12-month SMAs —
+                # NOT 20/50 month — validated via isolated diagnostic
+                # test first (see get_htf_alignment() docstring,
+                # BUG 3: longer periods gave zero discrimination,
+                # 4/5 test stocks scored identical max score).
+                # ISOLATED try/except — same protection pattern
+                # as RS-vs-sector above. Defaults to neutral (0)
+                # on any failure, never blocks the stock.
+                _ms_htf_score = 0
+                _ms_htf_label = ''
+                _ms_htf_clr   = '#64748b'
+                try:
+                    _ms_htf_score, _ms_htf_label, _ms_htf_clr = \
+                        get_htf_alignment(sym_clean, current_tf='weekly')
+                except Exception as _ms_htf_exc:
+                    st.session_state.setdefault('ms_scan_errors', []).append(
+                        f"{symbol} HTF-alignment (non-fatal, score=0): {str(_ms_htf_exc)[:80]}")
+                score += _ms_htf_score
+
                 # ── Filter 1: Candle close position ───────
                 # Reject if price closed in bottom 25% of week
                 _ms_wp, _ms_wp_score, _ms_wp_label, _ms_wp_reject = \
@@ -14581,6 +14680,10 @@ if _show_monthlyswing:
                     'rs_sec_score':  _ms_rs_sec_score,
                     'rs_sec_label':  _ms_rs_sec_label,
                     'rs_sec_clr':    _ms_rs_sec_clr,
+                    # HTF alignment (20-Jun-2026)
+                    'htf_score':     _ms_htf_score,
+                    'htf_label':     _ms_htf_label,
+                    'htf_clr':       _ms_htf_clr,
                     # Filter 3 — dynamic risk sizing
                     'adj_risk_pct':  _ms_adj_risk,
                     'risk_label':    _ms_risk_lbl,
@@ -15437,6 +15540,12 @@ if _show_monthlyswing:
                    f"({'+' if _ms_r.get('rs_sec_score',0)>=0 else ''}{_ms_r.get('rs_sec_score',0)}pts)"
                    f"</span>"
                    if _ms_r.get('rs_sec_label') else "")
+                + (f"<span style='font-weight:700;"
+                   f"color:{_ms_r.get('htf_clr','#64748b')}'>"
+                   f"{_ms_r.get('htf_label','')} "
+                   f"({'+' if _ms_r.get('htf_score',0)>=0 else ''}{_ms_r.get('htf_score',0)}pts)"
+                   f"</span>"
+                   if _ms_r.get('htf_label') else "")
                 + "</div>"
                 "<div style='display:flex;gap:12px;flex-wrap:wrap;"
                 "padding-top:5px;border-top:1px solid #e2e8f0'>"
@@ -15940,6 +16049,53 @@ if _show_backtest:
                 "Sanity check: stocks known to be outperforming their sector "
                 "should show positive diff + a leader label. Stocks known to "
                 "be lagging/PSAR-bearish should show negative or zero diff.")
+
+    # ── DIAGNOSTIC: HTF Alignment — isolated test ─────────────
+    # Standalone verification tool, completely separate from the
+    # live scanners. Run this FIRST and confirm numbers look right
+    # before wiring get_htf_alignment() into scan_sma_weekly() or
+    # scan_monthly_swing().
+    with st.expander("🔬 Diagnostic: Test HTF Alignment Math (isolated, no scanner impact)"):
+        st.caption(
+            "Runs the corrected get_htf_alignment() on known stocks to verify "
+            "the math before wiring it into live scanners. This now fetches "
+            "the higher timeframe DIRECTLY (1 extra API call per stock) "
+            "instead of the old broken/shallow resampling approach. "
+            "Zero impact on SMA Weekly / Monthly Swing.")
+
+        _htf_test_stocks = st.text_input(
+            "Stocks to test (comma-separated, no .NS)",
+            value="HINDZINC,TORNTPHARM,PCBL,KIMS,INDUSTOWER",
+            key="htf_diag_stocks")
+
+        _htf_test_tf = st.radio(
+            "Current timeframe", ["daily", "weekly"], horizontal=True, key="htf_diag_tf",
+            help="daily = SW scanner (checks weekly HTF) · "
+                 "weekly = MS scanner (checks monthly HTF)")
+
+        if st.button("▶️ Run HTF Alignment Test", key="htf_diag_run"):
+            _htf_diag_syms = [s.strip().upper() for s in _htf_test_stocks.split(',') if s.strip()]
+            _htf_diag_rows = []
+            for _sym in _htf_diag_syms:
+                try:
+                    _sc, _lbl, _clr = get_htf_alignment(_sym, current_tf=_htf_test_tf)
+                    _htf_diag_rows.append({
+                        'Symbol': _sym,
+                        'Score':  f"{_sc:+d}",
+                        'Label':  _lbl if _lbl else '(neutral — insufficient data or error)',
+                    })
+                except Exception as _htf_diag_exc:
+                    _htf_diag_rows.append({
+                        'Symbol': _sym, 'Error': str(_htf_diag_exc)[:100]})
+
+            if _htf_diag_rows:
+                st.dataframe(pd.DataFrame(_htf_diag_rows), use_container_width=True)
+            st.caption(
+                "Sanity check: a stock in a genuine multi-month uptrend should "
+                "show '✅ Uptrend confirmed' or 'Bullish'. A stock that's been "
+                "falling for weeks/months should show '❌ Bearish'. Empty/neutral "
+                "labels mean insufficient price history — not necessarily wrong, "
+                "just no signal either way.")
 
     # ── Helper functions ──────────────────────────────────────
 
